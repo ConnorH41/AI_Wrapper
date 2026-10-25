@@ -2,7 +2,15 @@
 
 A UGC product-video app: product photo in, short presenter-style product video out. We orchestrate hosted generative APIs; we do not train models. See `README.md` for the full picture.
 
-The repo is not scaffolded yet, so there are no build, test, or lint commands to run. When you add the first ones, document them here.
+```bash
+npm install          # first time
+npm run dev          # embedded Postgres + web + worker
+npm run db:start     # database only
+npm run db:migrate   # apply schema.sql
+npm run build        # Next.js production build
+```
+
+`npm run dev` waits for the embedded Postgres on `127.0.0.1:54329`, applies the schema, then starts `apps/web` at http://localhost:3000 and `apps/worker`. Media is written under `.data/media`. Do not point these scripts at a paid host.
 
 ## Stack
 

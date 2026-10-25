@@ -2,7 +2,7 @@
 
 A UGC product-video app. A creator uploads a product photo, describes the video they want, and gets back a short vertical product video with a presenter, voiceover, and captions.
 
-**Status:** planning only. Nothing is scaffolded yet — this repo currently contains documentation.
+**Status:** local MVP. Three screens, two job chains, and a real MP4 from local Ollama + Piper + ffmpeg. No API keys and no paid services.
 
 ## What "wrapper" means here
 
@@ -145,6 +145,17 @@ Three documents cover this in more depth — a UGC video wrapper briefing, the b
 
 ## Getting started
 
-Not applicable yet. The next step is stage 1 of the MVP plan above: scaffold the monorepo, the job chains, and the model router with mock providers.
+Requires Node 22, Ollama with `llama3.2:3b` running, Piper, and ffmpeg on `PATH`. Postgres is started for you by `embedded-postgres` — no Docker and no cloud account.
 
-The local toolchain for development — Ollama, Piper, and ffmpeg, all keyless and free — is documented in `AGENTS.md`.
+```bash
+npm install
+npm run dev
+```
+
+That starts the local database (and applies the schema), the Next.js app at http://localhost:3000, and the worker. Create a project, wait for stills, approve one, and a vertical MP4 lands on the project page.
+
+`PROVIDERS=mock npm run dev -w @aiw/worker` runs the worker against canned stubs if you want the pipeline without Ollama or ffmpeg.
+
+Auth is not wired yet. The local app is single-user. Supabase Auth arrives when there is a hosted database to hang it on.
+
+The local toolchain — Ollama, Piper, and ffmpeg — is documented in `AGENTS.md`.

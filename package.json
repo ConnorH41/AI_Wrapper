@@ -1,0 +1,18 @@
+{
+  "name": "ai-wrapper",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n db,web,worker -c blue,green,magenta \"npm run start -w @aiw/dev-db\" \"npm run dev -w @aiw/web\" \"npm run dev -w @aiw/worker\"",
+    "db:start": "npm run start -w @aiw/dev-db",
+    "db:migrate": "npm run migrate -w @aiw/core",
+    "build": "npm run build -w @aiw/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3"
+  }
+}

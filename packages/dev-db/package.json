@@ -1,0 +1,17 @@
+{
+  "name": "@aiw/dev-db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/start.ts"
+  },
+  "dependencies": {
+    "@aiw/core": "*",
+    "embedded-postgres": "18.4.0-beta.17"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2"
+  }
+}
