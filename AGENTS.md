@@ -16,6 +16,20 @@ Store object keys in Postgres and serve media through signed URLs. Media bytes n
 
 **Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. The worker runs on a container host (Fly.io, Railway, or Render), and for now the web app runs alongside it on the same host.
 
+## Local toolchain
+
+Development runs with no API keys and no rate limits. All three pieces are installed and verified on the dev machine.
+
+- **Script generation:** Ollama serving `llama3.2:3b` at `http://localhost:11434`. The endpoint at `/v1` is OpenAI-compatible, so write the script adapter against the OpenAI SDK with an overridden base URL — switching to a hosted provider then costs a base URL and a key, not a rewrite.
+- **Voiceover:** Piper at `C:\Users\hardi\tools\piper\piper.exe` with the `en_US-lessac-medium` voice. Reads text on stdin, writes a WAV via `--output_file`. Runs roughly 5x faster than real time on CPU.
+- **Assembly:** ffmpeg 9.0.2 on `PATH`.
+
+Local inference is CPU-only — the dev machine has no CUDA GPU. That is acceptable because generation happens in background jobs where tens of seconds go unnoticed. Do not move these calls into a request handler where the latency would show.
+
+Piper sounds recognizably synthetic. It exists to prove the pipeline, not to ship; swap in a hosted TTS before output reaches users.
+
+**There is no local video generation.** The integrated GPU cannot run a video model, which is why the first video path is a ffmpeg pan-and-zoom over the packshot rather than a model call.
+
 ## Constraints
 
 These are settled. Raise it with the user before working around any of them.
