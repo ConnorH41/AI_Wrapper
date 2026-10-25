@@ -72,8 +72,19 @@ During early development the worker can simply run on the dev machine against a 
 
 Two checks come before any code, because both can invalidate the plan:
 
-1. **Judge the output quality by hand.** Spend a small amount directly in Kling's and Hedra's own web interfaces, using real product photos and a real script. If image-to-video over a packshot does not look good enough to post, orchestration cannot fix it. Learn this in an afternoon rather than after the pipeline exists.
+1. **Judge the output quality by hand.** Study public samples first — Higgsfield's showcase and public Kling output — then run a real product photo through Kling's or Hailuo's daily free credits. If image-to-video over a packshot does not look good enough to post, orchestration cannot fix it. Learn this in an afternoon rather than after the pipeline exists.
 2. **Read the provider terms for commercial resale and multi-tenant use.** We resell generated video and route many users through one API key. Some providers restrict redistribution, require attribution, or prohibit multiplexing accounts.
+
+### The MVP runs at zero cost
+
+Everything except AI video generation fits in free tiers, and video generation is deferred to stage 4.
+
+- **Vercel Hobby** for the web app. Note it is **non-commercial** — charging anyone requires Pro.
+- **Neon or Supabase** free tier for Postgres. A constantly polling worker conveniently prevents inactivity pausing.
+- **Cloudflare R2** free tier, which includes zero egress — the right shape for a video product.
+- **The worker runs on the dev machine.** Free hosting for a long-lived background worker effectively does not exist, and because the worker pulls jobs from Postgres rather than receiving HTTP, a local process works end to end against a deployed frontend. Ollama, Piper, and ffmpeg are already installed there.
+
+Paid hosting and paid video generation both arrive at the same moment: the first paying user.
 
 ### The approval gate is two job chains, not one
 

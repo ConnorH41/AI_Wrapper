@@ -14,7 +14,9 @@ Store object keys in Postgres and serve media through signed URLs. Media bytes n
 
 ## Hosting
 
-The web app deploys to Vercel; the worker runs on a container host (Fly.io, Railway, or Render). Monorepo layout is `apps/web`, `apps/worker`, and a shared `packages/core` for schema, router, and types.
+**The MVP runs at zero cost.** Vercel Hobby (non-commercial — charging users requires Pro), a free-tier Neon or Supabase database, R2's free tier, and the worker running on the dev machine rather than a paid container host. Do not introduce a dependency that requires a paid plan without flagging it first.
+
+The web app deploys to Vercel; the worker eventually moves to a container host (Fly.io, Railway, or Render). Monorepo layout is `apps/web`, `apps/worker`, and a shared `packages/core` for schema, router, and types.
 
 **Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. Anything slow belongs in the worker, which the web app reaches only by writing a job row — the two halves never call each other directly.
 
