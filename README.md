@@ -96,6 +96,20 @@ These are painful to retrofit, so they belong in stage 1:
 - **Hard per-project and per-user caps**, even as a bare integer with no UI.
 - A **consent attestation** at reference upload. Users can upload a photo of anyone, which is a likeness problem as much as a feature, and most providers require the attestation in their terms.
 
+### UI scope
+
+Deliberately minimal. The product is the pipeline, not the interface.
+
+Three screens: a project list, a new-project form (packshot upload, optional reference images, prompt), and a project detail page showing status, the stills with approve/reject, and a video player on completion. Merging the list into the detail page to ship two is acceptable.
+
+- **shadcn/ui on its default theme.** No custom theming, no design system work.
+- **Poll for status.** A refetch every few seconds on the detail page. Streaming job progress buys nothing when jobs take minutes.
+- **Supabase Auth's prebuilt UI.** Do not hand-build login forms.
+
+The **approval gate is the one screen worth care** — it is the real product interaction and the main defense against wasted spend. Large stills, unambiguous approve and reject, and the cost of the next step shown before it is taken. Everything else can be plain.
+
+Skip entirely: landing page, onboarding, settings, dashboards, dark mode, animations, and anything responsive beyond not breaking on a phone.
+
 ### Deliberately cut from v1
 
 One provider per step with no router flexibility, one aspect ratio, no credits UI, no editor, no mobile client. The talking-head path can also wait — image-to-video over the packshot alone exercises the full pipeline with the fewest moving parts.

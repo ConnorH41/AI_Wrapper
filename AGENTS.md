@@ -48,6 +48,14 @@ These are settled. Raise it with the user before working around any of them.
 - **ffmpeg for assembly.** Cut, stitch, overlay, and captions all go through ffmpeg rather than a hosted editing service.
 - **API before client.** Mobile ships later against the same API, so keep product logic in the API and out of the web app.
 
+## UI scope
+
+Keep it minimal — the product is the pipeline. Three screens: project list, new-project form, project detail with status, stills approval, and a video player.
+
+Use shadcn/ui on its default theme. Do not add custom theming, animations, dark mode, a landing page, onboarding, or settings. Poll for job status rather than streaming. Use Supabase Auth's prebuilt UI instead of hand-built login forms.
+
+The approval gate screen is the exception and deserves real care: large stills, unambiguous approve and reject, and the next step's cost shown before it is incurred.
+
 ## The approval gate
 
 The single biggest risk is burning API spend on a generation the user never wanted.
