@@ -62,6 +62,14 @@ The single biggest risk is burning API spend on a generation the user never want
 
 Every expensive step must be gated behind cheap, user-approved output. Stills are approved before video generation runs. When you add a pipeline step, place it on the correct side of that gate and make the cost visible before the call, not after.
 
+## Job and schema rules
+
+- **TTS adapters return word-level timings alongside audio.** Captions drift otherwise, and fixing it later means reworking assembly.
+- **Every job carries a deadline and can reach a terminal failure state.** Provider polling hangs; without a timeout, projects sit in `processing` forever. A retry of a video generation costs money again, so retry behavior is a deliberate decision, not a default.
+- **Generations are many-per-project with one marked current.** Users re-roll stills they dislike. One-set-of-assets-per-project turns "try again" into a migration.
+- **Object storage has lifecycle rules** expiring intermediate stills, audio, and failed renders. Video grows without bound otherwise.
+- **Provider content refusals surface to the user as themselves**, not as a generic failure. Moderation rejections on prompts and uploads are expected traffic.
+
 ## Pipeline shape
 
 `script (LLM) → voiceover (TTS) → video (talking-head / image-to-video) → assembly (ffmpeg) → MP4`

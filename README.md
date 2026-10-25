@@ -68,6 +68,13 @@ During early development the worker can simply run on the dev machine against a 
 
 ## MVP plan
 
+### Validate before building
+
+Two checks come before any code, because both can invalidate the plan:
+
+1. **Judge the output quality by hand.** Spend a small amount directly in Kling's and Hedra's own web interfaces, using real product photos and a real script. If image-to-video over a packshot does not look good enough to post, orchestration cannot fix it. Learn this in an afternoon rather than after the pipeline exists.
+2. **Read the provider terms for commercial resale and multi-tenant use.** We resell generated video and route many users through one API key. Some providers restrict redistribution, require attribution, or prohibit multiplexing accounts.
+
 ### The approval gate is two job chains, not one
 
 The pipeline has to stop in the middle and wait for a person, possibly for hours. Rather than build a workflow engine, model it as two independent chains with the project's state in Postgres:
@@ -95,6 +102,11 @@ These are painful to retrofit, so they belong in stage 1:
 - **Idempotency keys** on every provider call, so a worker retry after a timeout does not pay twice.
 - **Hard per-project and per-user caps**, even as a bare integer with no UI.
 - A **consent attestation** at reference upload. Users can upload a photo of anyone, which is a likeness problem as much as a feature, and most providers require the attestation in their terms.
+- **Word-level timings from the TTS step.** Captions drift unless they are aligned to the voiceover's actual timing, so the TTS adapter returns timings alongside audio rather than just a WAV. Retrofitting this means reworking assembly.
+- **A deadline and a terminal failure state on every job.** Provider polling can hang indefinitely, and without a timeout projects sit in `processing` forever. Define what the user sees on failure, and whether a retry re-charges them — a retried video generation costs money twice.
+- **Attempt history in the schema.** Users will re-roll stills they dislike. Model generations as many-per-project with one marked current; a one-set-of-assets-per-project schema makes "try again" a migration.
+- **Object storage lifecycle rules.** Intermediate stills, audio, and failed renders accumulate quickly and video grows without bound. A rule expiring intermediates after about a week costs nothing now.
+- **A clean path for provider content refusals.** Moderation rejections on prompts and uploaded photos will happen and must reach the user as something better than a generic failure.
 
 ### UI scope
 
