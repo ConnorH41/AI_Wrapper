@@ -66,10 +66,48 @@ During early development the worker can simply run on the dev machine against a 
 - **Model router** sits between the pipeline and providers (Kling, Hedra, ElevenLabs, and others), so a provider can be swapped per step without touching pipeline logic. Provider calls are submit-then-poll.
 - **ffmpeg** does final assembly.
 
+## MVP plan
+
+### The approval gate is two job chains, not one
+
+The pipeline has to stop in the middle and wait for a person, possibly for hours. Rather than build a workflow engine, model it as two independent chains with the project's state in Postgres:
+
+1. **Chain A (cheap):** write the script, render the stills, set the project to `awaiting_approval`. Ends there.
+2. **The user approves** — an API call whose only job is to enqueue Chain B.
+3. **Chain B (expensive):** generate video, assemble with ffmpeg, publish the MP4.
+
+Neither chain ever blocks on a human, so no worker sits sleeping on an approval.
+
+### Build order
+
+Each stage produces something you can watch end to end, and the expensive dependency arrives last.
+
+1. **Pipeline with stub providers and ffmpeg-only video.** Every capability in the model router gets a `mock` implementation that sleeps and returns a canned asset. Real video comes from ffmpeg applying a slow pan and zoom to the packshot — no model involved. This proves projects, uploads, both job chains, the approval gate, storage, and assembly, at zero cost. Keep the stubs permanently; they make tests fast and free.
+2. **Real script generation,** pointed at local Ollama. Costs nothing and needs no key.
+3. **Real voiceover,** via local Piper. Clearly synthetic, but enough to validate timing and captions.
+4. **One paid hosted video call,** deliberately budgeted, once everything around it already works.
+
+### Build early, not later
+
+These are painful to retrofit, so they belong in stage 1:
+
+- A **cost ledger** — one row per provider call recording provider, model, step, duration, status, and estimated cost. Without it you cannot say what a finished video costs, and pricing depends on that number.
+- **Idempotency keys** on every provider call, so a worker retry after a timeout does not pay twice.
+- **Hard per-project and per-user caps**, even as a bare integer with no UI.
+- A **consent attestation** at reference upload. Users can upload a photo of anyone, which is a likeness problem as much as a feature, and most providers require the attestation in their terms.
+
+### Deliberately cut from v1
+
+One provider per step with no router flexibility, one aspect ratio, no credits UI, no editor, no mobile client. The talking-head path can also wait — image-to-video over the packshot alone exercises the full pipeline with the fewest moving parts.
+
+Pin the **output format** before writing provider code: aspect ratio, target duration, resolution, and caption style get hardcoded into every provider call and every ffmpeg command, and changing them later means touching every step.
+
 ## Design docs
 
 Three documents cover this in more depth — a UGC video wrapper briefing, the backend architecture, and the MVP build plan. They currently live in the cloud Project Context and have not been committed here yet.
 
 ## Getting started
 
-Not applicable yet. The next step is scaffolding the web app, the job pipeline, and the model router from the MVP build plan.
+Not applicable yet. The next step is stage 1 of the MVP plan above: scaffold the monorepo, the job chains, and the model router with mock providers.
+
+The local toolchain for development — Ollama, Piper, and ffmpeg, all keyless and free — is documented in `AGENTS.md`.
