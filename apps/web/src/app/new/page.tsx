@@ -1,4 +1,5 @@
 import { createProjectAction } from "../actions";
+import { FileField } from "@/components/file-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,8 +12,9 @@ export default function NewProjectPage() {
       <CardHeader>
         <CardTitle>New project</CardTitle>
         <CardDescription>
-          Upload the real product photo. The pipeline writes a script, frames
-          stills, and waits for you before spending anything on video.
+          A prompt is enough to start. Add a product photo if you have one — the
+          real packshot is composited in. Without it, stills are title cards
+          from the project name.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -30,14 +32,18 @@ export default function NewProjectPage() {
               placeholder="A 15-second ad for a stainless steel water bottle. Confident, clean, no gimmicks."
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="packshot">Product photo</Label>
-            <Input id="packshot" name="packshot" type="file" accept="image/*" required />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="references">Person references (optional)</Label>
-            <Input id="references" name="references" type="file" accept="image/*" multiple />
-          </div>
+          <FileField
+            id="packshot"
+            name="packshot"
+            label="Product photo (optional)"
+            hint="Used as the real packshot in the frame. Skip this if you only have a prompt."
+          />
+          <FileField
+            id="references"
+            name="references"
+            label="Person references (optional)"
+            multiple
+          />
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" name="consent" className="mt-1" />
             <span>

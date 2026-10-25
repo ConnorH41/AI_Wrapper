@@ -41,7 +41,8 @@ export type VoiceProvider = {
 export type StillsProvider = {
   name: string;
   renderStills(input: {
-    productPath: string;
+    productPath?: string;
+    title: string;
     width: number;
     height: number;
     count: number;

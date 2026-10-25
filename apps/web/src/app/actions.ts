@@ -30,9 +30,7 @@ export async function createProjectAction(formData: FormData): Promise<void> {
   const consent = formData.get("consent") === "on";
 
   if (!prompt) throw new Error("A prompt is required");
-  if (!(packshot instanceof File) || packshot.size === 0) {
-    throw new Error("A product photo is required");
-  }
+  const hasPackshot = packshot instanceof File && packshot.size > 0;
   if (references.length > 0 && !consent) {
     throw new Error("Consent is required when uploading a person reference");
   }
@@ -45,18 +43,20 @@ export async function createProjectAction(formData: FormData): Promise<void> {
     consentAttested: consent,
   });
 
-  const productKey = `${project.id}/product${extOf(packshot)}`;
-  await storage.put(
-    productKey,
-    Buffer.from(await packshot.arrayBuffer()),
-    packshot.type || "image/jpeg",
-  );
-  await addAsset({
-    projectId: project.id,
-    kind: "product",
-    storageKey: productKey,
-    mime: packshot.type || "image/jpeg",
-  });
+  if (hasPackshot) {
+    const productKey = `${project.id}/product${extOf(packshot)}`;
+    await storage.put(
+      productKey,
+      Buffer.from(await packshot.arrayBuffer()),
+      packshot.type || "image/jpeg",
+    );
+    await addAsset({
+      projectId: project.id,
+      kind: "product",
+      storageKey: productKey,
+      mime: packshot.type || "image/jpeg",
+    });
+  }
 
   for (const [index, file] of references.entries()) {
     const key = `${project.id}/reference-${index}${extOf(file)}`;

@@ -47,12 +47,12 @@ export async function runChainA(projectId: string): Promise<void> {
 
     await setStatus(projectId, "stills");
     const product = (await getAssets(projectId, "product"))[0];
-    if (!product) throw new Error("Project has no product photo");
 
     await clearAssets(projectId, "still");
     const stills = await step(project, "stills", () =>
       router.stills.renderStills({
-        productPath: storage.localPath(product.storage_key),
+        productPath: product ? storage.localPath(product.storage_key) : undefined,
+        title: project.title,
         width: project.width,
         height: project.height,
         count: 3,
@@ -72,6 +72,7 @@ export async function runChainA(projectId: string): Promise<void> {
 
     await setStatus(projectId, "awaiting_approval");
   } catch (error) {
+    console.error(`[chain-a] ${projectId} failed`, error);
     await setStatus(projectId, "failed", message(error));
     throw error;
   }

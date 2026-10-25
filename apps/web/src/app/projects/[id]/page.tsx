@@ -79,8 +79,8 @@ export default async function ProjectPage({
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">Approve a still</h2>
           <p className="text-sm text-muted-foreground">
-            These are the real packshot, framed three ways. Pick one before any
-            video work starts.
+            Pick one still before any video work starts. A product photo is
+            framed as the packshot; without one, these are title cards.
           </p>
           <ApprovalGate
             projectId={project.id}
