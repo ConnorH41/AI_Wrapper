@@ -34,11 +34,26 @@ Stills are approved by the user **before** any video generation runs. Video call
 | Product look | Composite the real packshot. AI-invented packaging is a later, optional path. |
 | Surface | Web first. Mobile later, against the same API. |
 
+## Tech stack
+
+TypeScript end to end — Next.js for the web app, a plain Node worker process for jobs. We call hosted APIs over HTTP and have no model code of our own, so Python would add a second language and a second deploy target without buying anything.
+
+- **Postgres** holds all state. Supabase or Neon; Supabase also covers auth.
+- **S3-compatible object storage** holds all media. Cloudflare R2 is preferred over S3 because video means heavy egress and R2 does not bill for it. Store object keys in Postgres and serve through signed URLs; never store media bytes in the database.
+- **Queue:** `pg-boss`, to stay on the database we already run. BullMQ with Redis is the alternative.
+- **ffmpeg** runs in a container we control.
+
+## Hosting
+
+Generation work and ffmpeg **cannot run on serverless**. Execution timeouts are measured in seconds to minutes, there are no persistent worker processes, and an ffmpeg binary exceeds typical bundle limits. Our jobs take minutes by design.
+
+The web app could live on Vercel, but the worker needs a container host — Fly.io, Railway, or Render. For the MVP both run on a single container host: one deploy, no split between two platforms. Moving the frontend to Vercel later stays an option.
+
 ## Architecture sketch
 
 - **Web app** is the only client for now, but the API is designed so a mobile client can reuse it unchanged.
 - **Job pipeline** runs generation asynchronously. Individual steps take minutes, so nothing expensive happens in a request handler.
-- **Model router** sits between the pipeline and providers (Kling, Hedra, ElevenLabs, and others), so a provider can be swapped per step without touching pipeline logic.
+- **Model router** sits between the pipeline and providers (Kling, Hedra, ElevenLabs, and others), so a provider can be swapped per step without touching pipeline logic. Provider calls are submit-then-poll.
 - **ffmpeg** does final assembly.
 
 ## Design docs

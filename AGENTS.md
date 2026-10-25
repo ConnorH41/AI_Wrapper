@@ -4,6 +4,18 @@ A UGC product-video app: product photo in, short presenter-style product video o
 
 The repo is not scaffolded yet, so there are no build, test, or lint commands to run. When you add the first ones, document them here.
 
+## Stack
+
+TypeScript end to end: Next.js for the web app, a plain Node worker process for jobs. Postgres for state, S3-compatible object storage (Cloudflare R2) for media, `pg-boss` for the queue, ffmpeg in a container.
+
+Do not introduce a second language. We call hosted APIs over HTTP and have no model code, so a Python service would add a deploy target without buying anything.
+
+Store object keys in Postgres and serve media through signed URLs. Media bytes never go in the database.
+
+## Hosting
+
+**Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. The worker runs on a container host (Fly.io, Railway, or Render), and for now the web app runs alongside it on the same host.
+
 ## Constraints
 
 These are settled. Raise it with the user before working around any of them.
