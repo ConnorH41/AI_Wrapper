@@ -45,9 +45,19 @@ TypeScript end to end — Next.js for the web app, a plain Node worker process f
 
 ## Hosting
 
-Generation work and ffmpeg **cannot run on serverless**. Execution timeouts are measured in seconds to minutes, there are no persistent worker processes, and an ffmpeg binary exceeds typical bundle limits. Our jobs take minutes by design.
+The web app deploys to **Vercel**. The worker runs on a **container host** (Fly.io, Railway, or Render).
 
-The web app could live on Vercel, but the worker needs a container host — Fly.io, Railway, or Render. For the MVP both run on a single container host: one deploy, no split between two platforms. Moving the frontend to Vercel later stays an option.
+Generation work and ffmpeg **cannot run on serverless**: execution timeouts are measured in seconds to minutes, there are no persistent worker processes, and an ffmpeg binary exceeds typical bundle limits. Our jobs take minutes by design, so they live in the worker.
+
+The two halves never call each other. The web app writes a job row; the worker picks it up. `pg-boss` divides along the same line — `send()` is an INSERT and runs fine in a serverless function, while `work()` is the long-lived loop that needs the container.
+
+Three rules follow from the Vercel half:
+
+- **Uploads go directly to object storage.** Serverless request bodies cap around 4.5 MB, which product photos exceed. API routes issue presigned URLs and the browser uploads straight to R2. Finished MP4s are likewise served from the CDN, never proxied through a function.
+- **Use the pooled Postgres connection string** in the web app. Ephemeral functions open a connection per cold start and will exhaust the database otherwise. The worker can use the direct connection.
+- **Keep both halves in one monorepo** — `apps/web`, `apps/worker`, and a shared `packages/core` for the database schema, provider router, and types — so the two deploys cannot drift apart.
+
+During early development the worker can simply run on the dev machine against a cloud database, letting a deployed Vercel frontend work end to end with local models and no API spend.
 
 ## Architecture sketch
 

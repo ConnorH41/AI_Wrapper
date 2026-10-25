@@ -14,7 +14,15 @@ Store object keys in Postgres and serve media through signed URLs. Media bytes n
 
 ## Hosting
 
-**Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. The worker runs on a container host (Fly.io, Railway, or Render), and for now the web app runs alongside it on the same host.
+The web app deploys to Vercel; the worker runs on a container host (Fly.io, Railway, or Render). Monorepo layout is `apps/web`, `apps/worker`, and a shared `packages/core` for schema, router, and types.
+
+**Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. Anything slow belongs in the worker, which the web app reaches only by writing a job row — the two halves never call each other directly.
+
+When adding code to `apps/web`, respect these:
+
+- Uploads use presigned URLs straight to object storage. Never route file bytes through an API route; serverless bodies cap near 4.5 MB. Serve output media from the CDN, not through a function.
+- Use the pooled Postgres connection string. The worker uses the direct one.
+- `pg-boss` `send()` is safe in a route; `work()` only ever runs in the worker.
 
 ## Local toolchain
 
