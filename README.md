@@ -1,161 +1,96 @@
 # AI Wrapper
 
-A UGC product-video app. A creator uploads a product photo, describes the video they want, and gets back a short vertical product video with a presenter, voiceover, and captions.
+A session-only product-video studio. Upload a real product photo, upload or describe a presenter portrait, review a script and narration, then download a 15-second vertical MP4. Presenter images remain still; v1 does not generate lip-sync or body motion.
 
-**Status:** local MVP. Three screens, two job chains, and a real MP4 from local Ollama + Piper + ffmpeg. No API keys and no paid services.
+## Run locally
 
-## What "wrapper" means here
+Requires Node.js 22 and npm. The session studio does not require Postgres, Ollama, Piper, or native ffmpeg.
 
-We do not train a video model. The product is an orchestration layer: hosted generative APIs, stitched together by a job pipeline, wrapped in UX that makes the output repeatable.
-
-Higgsfield-style precision does not come from one magic model. It comes from reference images, presets, short clips, an approve-then-animate flow, and compositing the real product photo into the frame. The quality is in the pipeline, not the checkpoint.
-
-## Pipeline
-
-```
-Project
-  → upload product packshot (+ optional person references) and/or prompt
-  → LLM writes the script
-  → TTS renders the voiceover
-  → talking-head / image-to-video via hosted APIs
-  → ffmpeg composites product, overlays, and captions
-  → MP4
-```
-
-Stills are approved by the user **before** any video generation runs. Video calls are by far the most expensive step, so a bad prompt or a bad reference must be caught while it is still cheap to fix.
-
-## Locked decisions
-
-| Area | Decision |
-| --- | --- |
-| Talent | No stock avatars. Users prompt and/or upload their own references. |
-| Models | Hosted APIs only for the MVP. No self-hosted GPUs on day one. |
-| Assembly | ffmpeg for cut, stitch, overlay, and captions. |
-| Product look | Composite the real packshot. AI-invented packaging is a later, optional path. |
-| Surface | Web first. Mobile later, against the same API. |
-
-## Tech stack
-
-TypeScript end to end — Next.js for the web app, a plain Node worker process for jobs. We call hosted APIs over HTTP and have no model code of our own, so Python would add a second language and a second deploy target without buying anything.
-
-- **Postgres** holds all state. Supabase or Neon; Supabase also covers auth.
-- **S3-compatible object storage** holds all media. Cloudflare R2 is preferred over S3 because video means heavy egress and R2 does not bill for it. Store object keys in Postgres and serve through signed URLs; never store media bytes in the database.
-- **Queue:** `pg-boss`, to stay on the database we already run. BullMQ with Redis is the alternative.
-- **ffmpeg** runs in a container we control.
-
-## Hosting
-
-The web app deploys to **Vercel**. The worker runs on a **container host** (Fly.io, Railway, or Render).
-
-Generation work and ffmpeg **cannot run on serverless**: execution timeouts are measured in seconds to minutes, there are no persistent worker processes, and an ffmpeg binary exceeds typical bundle limits. Our jobs take minutes by design, so they live in the worker.
-
-The two halves never call each other. The web app writes a job row; the worker picks it up. `pg-boss` divides along the same line — `send()` is an INSERT and runs fine in a serverless function, while `work()` is the long-lived loop that needs the container.
-
-Three rules follow from the Vercel half:
-
-- **Uploads go directly to object storage.** Serverless request bodies cap around 4.5 MB, which product photos exceed. API routes issue presigned URLs and the browser uploads straight to R2. Finished MP4s are likewise served from the CDN, never proxied through a function.
-- **Use the pooled Postgres connection string** in the web app. Ephemeral functions open a connection per cold start and will exhaust the database otherwise. The worker can use the direct connection.
-- **Keep both halves in one monorepo** — `apps/web`, `apps/worker`, and a shared `packages/core` for the database schema, provider router, and types — so the two deploys cannot drift apart.
-
-During early development the worker can simply run on the dev machine against a cloud database, letting a deployed Vercel frontend work end to end with local models and no API spend.
-
-## Architecture sketch
-
-- **Web app** is the only client for now, but the API is designed so a mobile client can reuse it unchanged.
-- **Job pipeline** runs generation asynchronously. Individual steps take minutes, so nothing expensive happens in a request handler.
-- **Model router** sits between the pipeline and providers (Kling, Hedra, ElevenLabs, and others), so a provider can be swapped per step without touching pipeline logic. Provider calls are submit-then-poll.
-- **ffmpeg** does final assembly.
-
-## MVP plan
-
-### Validate before building
-
-Two checks come before any code, because both can invalidate the plan:
-
-1. **Judge the output quality by hand.** Study public samples first — Higgsfield's showcase and public Kling output — then run a real product photo through Kling's or Hailuo's daily free credits. If image-to-video over a packshot does not look good enough to post, orchestration cannot fix it. Learn this in an afternoon rather than after the pipeline exists.
-2. **Read the provider terms for commercial resale and multi-tenant use.** We resell generated video and route many users through one API key. Some providers restrict redistribution, require attribution, or prohibit multiplexing accounts.
-
-### The MVP runs at zero cost
-
-Everything except AI video generation fits in free tiers, and video generation is deferred to stage 4.
-
-- **Vercel Hobby** for the web app. Note it is **non-commercial** — charging anyone requires Pro.
-- **Neon or Supabase** free tier for Postgres. A constantly polling worker conveniently prevents inactivity pausing.
-- **Cloudflare R2** free tier, which includes zero egress — the right shape for a video product.
-- **The worker runs on the dev machine.** Free hosting for a long-lived background worker effectively does not exist, and because the worker pulls jobs from Postgres rather than receiving HTTP, a local process works end to end against a deployed frontend. Ollama, Piper, and ffmpeg are already installed there.
-
-Paid hosting and paid video generation both arrive at the same moment: the first paying user.
-
-### The approval gate is two job chains, not one
-
-The pipeline has to stop in the middle and wait for a person, possibly for hours. Rather than build a workflow engine, model it as two independent chains with the project's state in Postgres:
-
-1. **Chain A (cheap):** write the script, render the stills, set the project to `awaiting_approval`. Ends there.
-2. **The user approves** — an API call whose only job is to enqueue Chain B.
-3. **Chain B (expensive):** generate video, assemble with ffmpeg, publish the MP4.
-
-Neither chain ever blocks on a human, so no worker sits sleeping on an approval.
-
-### Build order
-
-Each stage produces something you can watch end to end, and the expensive dependency arrives last.
-
-1. **Pipeline with stub providers and ffmpeg-only video.** Every capability in the model router gets a `mock` implementation that sleeps and returns a canned asset. Real video comes from ffmpeg applying a slow pan and zoom to the packshot — no model involved. This proves projects, uploads, both job chains, the approval gate, storage, and assembly, at zero cost. Keep the stubs permanently; they make tests fast and free.
-2. **Real script generation,** pointed at local Ollama. Costs nothing and needs no key.
-3. **Real voiceover,** via local Piper. Clearly synthetic, but enough to validate timing and captions.
-4. **One paid hosted video call,** deliberately budgeted, once everything around it already works.
-
-### Build early, not later
-
-These are painful to retrofit, so they belong in stage 1:
-
-- A **cost ledger** — one row per provider call recording provider, model, step, duration, status, and estimated cost. Without it you cannot say what a finished video costs, and pricing depends on that number.
-- **Idempotency keys** on every provider call, so a worker retry after a timeout does not pay twice.
-- **Hard per-project and per-user caps**, even as a bare integer with no UI.
-- A **consent attestation** at reference upload. Users can upload a photo of anyone, which is a likeness problem as much as a feature, and most providers require the attestation in their terms.
-- **Word-level timings from the TTS step.** Captions drift unless they are aligned to the voiceover's actual timing, so the TTS adapter returns timings alongside audio rather than just a WAV. Retrofitting this means reworking assembly.
-- **A deadline and a terminal failure state on every job.** Provider polling can hang indefinitely, and without a timeout projects sit in `processing` forever. Define what the user sees on failure, and whether a retry re-charges them — a retried video generation costs money twice.
-- **Attempt history in the schema.** Users will re-roll stills they dislike. Model generations as many-per-project with one marked current; a one-set-of-assets-per-project schema makes "try again" a migration.
-- **Object storage lifecycle rules.** Intermediate stills, audio, and failed renders accumulate quickly and video grows without bound. A rule expiring intermediates after about a week costs nothing now.
-- **A clean path for provider content refusals.** Moderation rejections on prompts and uploaded photos will happen and must reach the user as something better than a generic failure.
-
-### UI scope
-
-Deliberately minimal. The product is the pipeline, not the interface.
-
-Three screens: a project list, a new-project form (packshot upload, optional reference images, prompt), and a project detail page showing status, the stills with approve/reject, and a video player on completion. Merging the list into the detail page to ship two is acceptable.
-
-- **shadcn/ui on its default theme.** No custom theming, no design system work.
-- **Poll for status.** A refetch every few seconds on the detail page. Streaming job progress buys nothing when jobs take minutes.
-- **Supabase Auth's prebuilt UI.** Do not hand-build login forms.
-
-The **approval gate is the one screen worth care** — it is the real product interaction and the main defense against wasted spend. Large stills, unambiguous approve and reject, and the cost of the next step shown before it is taken. Everything else can be plain.
-
-Skip entirely: landing page, onboarding, settings, dashboards, dark mode, animations, and anything responsive beyond not breaking on a phone.
-
-### Deliberately cut from v1
-
-One provider per step with no router flexibility, one aspect ratio, no credits UI, no editor, no mobile client. The talking-head path can also wait — image-to-video over the packshot alone exercises the full pipeline with the fewest moving parts.
-
-Pin the **output format** before writing provider code: aspect ratio, target duration, resolution, and caption style get hardcoded into every provider call and every ffmpeg command, and changing them later means touching every step.
-
-## Design docs
-
-Three documents cover this in more depth — a UGC video wrapper briefing, the backend architecture, and the MVP build plan. They currently live in the cloud Project Context and have not been committed here yet.
-
-## Getting started
-
-Requires Node 22, Ollama with `llama3.2:3b` running, Piper, and ffmpeg on `PATH`. Postgres is started for you by `embedded-postgres` — no Docker and no cloud account.
-
-```bash
+```powershell
 npm install
+if (-not (Test-Path apps/web/.env.local)) { Copy-Item apps/web/.env.local.example apps/web/.env.local }
+# Fill in apps/web/.env.local, then:
 npm run dev
 ```
 
-That starts the local database (and applies the schema), the Next.js app at http://localhost:3000, and the worker. Create a project, wait for stills, approve one, and a vertical MP4 lands on the project page.
+Open http://localhost:3000. /studio is an alias for the same screen. Keep the tab open and download the result before refreshing; there is no project history, database, localStorage, or object storage in this flow.
 
-`PROVIDERS=mock npm run dev -w @aiw/worker` runs the worker against canned stubs if you want the pipeline without Ollama or ffmpeg.
+If apps/web/.env.local already exists, preserve it and fill its empty provider fields. The local setup may already contain generated app authentication secrets.
 
-Auth is not wired yet. The local app is single-user. Supabase Auth arrives when there is a hosted database to hang it on.
+## Credentials and free-tier setup
 
-The local toolchain — Ollama, Piper, and ffmpeg — is documented in `AGENTS.md`.
+All credentials stay on the server. Never prefix them with NEXT_PUBLIC_ or commit .env.local.
+
+| Variable | Setup |
+| --- | --- |
+| GEMINI_API_KEY | Create a key in [Google AI Studio](https://aistudio.google.com/api-keys) in a project without paid billing. |
+| CLOUDFLARE_ACCOUNT_ID | In [Cloudflare Workers AI](https://dash.cloudflare.com/), choose Use REST API and copy Account ID. |
+| CLOUDFLARE_API_TOKEN | On that page, choose Create a Workers AI API Token and use the supplied permission template. Stay on Workers Free. |
+| GROQ_API_KEY | Create a key at [Groq](https://console.groq.com/keys); keep the account on the free plan. |
+| APP_ACCESS_PASSWORD | Shared tester password, at least 16 characters. |
+| SESSION_SIGNING_SECRET | Random secret, at least 32 characters. Generate locally using the command below. |
+
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Do not paste secrets into chat or commit them. Restart the dev server after editing environment variables.
+
+The selected REST models are gemini-3.1-flash-lite for copy, gemini-3.8-flash-tts with voice Kore for speech, @cf/black-forest-labs/flux-1-schnell with 4 steps for portraits, and whisper-large-v3-turbo for word timestamps. These IDs are pinned in apps/web/src/lib/server/providers.ts against current documentation. Live model access and free-account quota must still be verified with your credentials before release. No automatic retries or paid provider fallback are implemented.
+
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [Groq limits](https://console.groq.com/docs/rate-limits).
+
+## Creation flow
+
+1. Enter the shared password. The server issues an HttpOnly, SameSite=Strict cookie valid for 12 hours, Secure in production.
+2. Select a product photo, name, factual benefit, and optional direction. Select one presenter image with likeness consent, or generate a fictional adult portrait. Uploads stay in browser memory.
+3. Generate or edit roughly 30 words of copy. Generate narration, then request caption timings separately. A timing failure can be retried without generating speech again.
+4. Review all three scene previews, the spoken audio, and the transcript. Approve the current inputs and create the MP4.
+5. Play and download the MP4. Start over clears all session media. Closing or refreshing the tab discards the draft.
+
+The output is 720 x 1280, 30 fps, 15 seconds, H.264/AAC. Scenes cover presenter/product (0–3s), product/benefit (3–11s), and presenter/product with Learn more (11–15s). Real product images are proportionally fitted into the frame. Long narration is rejected without truncation. Short audio is padded with silence. Captions use returned word timings, never invented uniform timing.
+
+The single-thread ffmpeg.wasm engine runs in a browser worker. Its assets are copied from locked npm packages by the predev/prebuild script; the caption font and OFL license are bundled. No WASM or font CDN requests are needed. The font stack for the app is the system default. Desktop Chrome and Edge are supported; phone browsers are outside v1.
+
+## API
+
+All responses are uncached. Generation routes require the signed cookie and a matching Origin header. JSON requests are limited to 16 KiB, WAV timing requests to 1 MiB. Provider requests time out within the 90-second function deadline. Provider responses are bounded below Vercel's payload limit.
+
+| Route | Request | Result |
+| --- | --- | --- |
+| GET /api/session | Cookie | authenticated boolean |
+| POST /api/session | JSON password | Signed session cookie |
+| DELETE /api/session | Matching Origin | Expire cookie |
+| POST /api/script | JSON name, benefit, direction | JSON script |
+| POST /api/avatar | JSON prompt | JPEG or PNG bytes |
+| POST /api/voice | JSON script | PCM WAV bytes, X-Audio-Duration header |
+| POST /api/timings | audio/wav body | JSON timings: word, start, end |
+
+Errors use { error: { code, message } }, with invalid_input, unauthorized, forbidden, missing_configuration, quota_exhausted, provider_refusal, timeout, or upstream_failure. Never log provider credentials, uploaded media, or script contents. The shared password is a tester gate, not per-user quota accounting. Everyone with access shares the free provider allowance. Logout clears the browser cookie; rotating the signing secret invalidates all existing cookies.
+
+## Verification
+
+```powershell
+npm test
+npm run typecheck
+npm run build
+npm run test:browser
+# After configuring free-tier credentials, make real provider calls:
+npm run test:live
+```
+
+The browser tests use installed Chrome and Edge, controlled API responses, and actual ffmpeg.wasm encoding. Test audio is a fixture tone, not a real-provider narration claim. Exports and screenshots are written under ignored test-results/. Unit tests cover authentication, origins, body limits, WAV parsing, caption timing, render plans, and documented provider shapes. A separate real-provider smoke check and Vercel preview check are required before promotion.
+
+To test the production bundle locally, first build, then run `$env:AIW_TEST_PRODUCTION = '1'; npm run test:browser` in PowerShell. Run builds and browser tests sequentially because both use the same Next.js output directory. The tests check cookie authentication, production-only legacy route blocking, actual encoding/playback/download, cancellation and rerendering, session recovery, image validation, and API request-size limits.
+
+The dependency audit currently reports existing Next.js/PostCSS advisories in Next's bundled PostCSS 8.4.31. The studio does not accept or process user CSS. A framework/dependency upgrade is separate from this MVP change; do not run npm audit fix --force to silently introduce a major Next.js upgrade.
+
+## Vercel
+
+Use Next.js with Root Directory apps/web, enable source files outside the root directory, install with the repository's npm lockfile, and run the app's build script. Configure the six variables above separately for Preview and Production. Never deploy real credentials as public variables. Verify preview generation, same-origin cookie access, static WASM/font loading, and downloaded MP4 playback before promotion.
+
+Vercel Hobby is restricted to personal, non-commercial use. Free access does not automatically make a business deployment non-commercial. [Fair-use rules](https://vercel.com/docs/limits/fair-use-guidelines).
+
+## Transition status
+
+The previous database-backed source and dependencies are intentionally retained until a real narration plus real word-timing export succeeds using the intended free accounts. The legacy UI is available in development at /legacy and /new, and npm run dev:legacy starts the original local stack. Legacy pages, media, and server actions return 404 in production. Existing .data files are preserved. Remove this section and the legacy infrastructure only after the approved feasibility gate passes.

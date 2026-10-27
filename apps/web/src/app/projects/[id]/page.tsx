@@ -11,6 +11,7 @@ import { Poller } from "@/components/poller";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApprovalGate } from "./approval";
+import { requireLegacyDevelopment } from "@/lib/server/legacy";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  requireLegacyDevelopment();
   const { id } = await params;
   const project = await getProject(id);
   if (!project) notFound();

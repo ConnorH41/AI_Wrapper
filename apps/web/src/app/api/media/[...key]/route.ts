@@ -4,11 +4,13 @@ import { localPath, mediaRoot } from "@aiw/core";
 import { NextResponse } from "next/server";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { requireLegacyDevelopment } from "@/lib/server/legacy";
 
 export async function GET(
   _request: Request,
   context: { params: Promise<{ key: string[] }> },
 ) {
+  requireLegacyDevelopment();
   const { key } = await context.params;
   const storageKey = key.join("/");
 

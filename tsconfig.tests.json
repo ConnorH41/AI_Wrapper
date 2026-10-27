@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["node"],
+    "jsx": "preserve",
+    "paths": { "@/*": ["./apps/web/src/*"] }
+  },
+  "include": ["tests/**/*.ts", "scripts/**/*.ts", "playwright.config.ts"]
+}

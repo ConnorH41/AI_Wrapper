@@ -5,8 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { requireLegacyDevelopment } from "@/lib/server/legacy";
 
 export default function NewProjectPage() {
+  requireLegacyDevelopment();
   return (
     <Card className="max-w-xl">
       <CardHeader>

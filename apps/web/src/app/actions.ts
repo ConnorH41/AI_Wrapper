@@ -13,6 +13,7 @@ import {
   storage,
 } from "@aiw/core";
 import { redirect } from "next/navigation";
+import { requireLegacyDevelopment } from "@/lib/server/legacy";
 
 function extOf(file: File): string {
   const fromName = path.extname(file.name);
@@ -23,6 +24,7 @@ function extOf(file: File): string {
 }
 
 export async function createProjectAction(formData: FormData): Promise<void> {
+  requireLegacyDevelopment();
   const title = String(formData.get("title") ?? "").trim() || "Untitled";
   const prompt = String(formData.get("prompt") ?? "").trim();
   const packshot = formData.get("packshot");
@@ -74,6 +76,7 @@ export async function createProjectAction(formData: FormData): Promise<void> {
 }
 
 export async function approveAction(formData: FormData): Promise<void> {
+  requireLegacyDevelopment();
   const projectId = String(formData.get("projectId") ?? "");
   const stillId = String(formData.get("stillId") ?? "");
   const project = await getProject(projectId);
@@ -90,6 +93,7 @@ export async function approveAction(formData: FormData): Promise<void> {
 }
 
 export async function rejectAction(formData: FormData): Promise<void> {
+  requireLegacyDevelopment();
   const projectId = String(formData.get("projectId") ?? "");
   const project = await getProject(projectId);
   if (!project) throw new Error("Project not found");

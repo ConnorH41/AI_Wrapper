@@ -1,87 +1,71 @@
 # AI Wrapper — agent guide
 
-A UGC product-video app: product photo in, short presenter-style product video out. We orchestrate hosted generative APIs; we do not train models. See `README.md` for the full picture.
+## Current product
 
-```bash
-npm install          # first time
-npm run dev          # embedded Postgres + web + worker
-npm run db:start     # database only
-npm run db:migrate   # apply schema.sql
-npm run build        # Next.js production build
+The approved MVP is a session-only UGC product-ad studio. The user supplies the real product photo and either uploads a presenter portrait or prompts a fictional adult presenter. They review the script, audio, caption transcript, and three scene previews, then approve and download a 15-second MP4.
+
+Presenter portraits remain still. No lip-sync, body motion, fake product handling, stock avatar library, or invented packaging.
+
+## Stack and commands
+
+TypeScript throughout. Next.js App Router, React, existing shadcn/ui and Tailwind. Browser-safe types and pure media helpers live in packages/core/src/session.ts and are imported through @aiw/core/session. Server provider adapters live under apps/web/src/lib/server. The browser renderer uses single-thread ffmpeg.wasm in a Web Worker.
+
+```powershell
+npm install
+npm run dev          # web only; no database or local models
+npm test             # focused Node tests
+npm run typecheck
+npm run build
+npm run test:browser # installed desktop Chrome and Edge
+npm run dev:legacy   # original local stack, retained temporarily
 ```
 
-`npm run dev` waits for the embedded Postgres on `127.0.0.1:54329`, applies the schema, then starts `apps/web` at http://localhost:3000 and `apps/worker`. Media is written under `.data/media`. Do not point these scripts at a paid host.
+See apps/web/.env.local.example and README.md for credential setup. Do not print secrets or read .env.local into tool output. Check only variable names and presence. Never commit credentials or put them in NEXT_PUBLIC_ variables.
 
-## Stack
+## Approved architecture
 
-TypeScript end to end: Next.js for the web app, a plain Node worker process for jobs. Postgres for state, S3-compatible object storage (Cloudflare R2) for media, `pg-boss` for the queue, ffmpeg in a container.
+- Vercel hosts the app and bounded provider HTTP requests. This replaces the original blanket prohibition on generation requests in serverless; ffmpeg assembly still never runs in a function.
+- Images, previews, audio, timings, and final video live only in browser memory. No database, persistent job queue, browser storage, object storage, or account system is needed for the session flow.
+- The shared tester password lives in APP_ACCESS_PASSWORD. SESSION_SIGNING_SECRET signs 12-hour HttpOnly, SameSite=Strict cookies, Secure in production. Every provider endpoint checks authentication and Origin. Missing configuration fails closed.
+- Keep product logic and provider credentials behind API boundaries. Canvas preparation and ffmpeg encoding execute in the browser.
+- Uploads are JPEG, PNG, or WebP, at most 10 MB and 40 million pixels. Validate decoding and MIME contents. Require likeness consent for uploaded presenter photos. Photos stay in the browser.
+- Script/avatar JSON input is limited to 16 KiB; timing WAV input to 1 MiB. Provider responses stay below Vercel's payload limit. Requests have an 85-second cancellation signal and a 90-second function deadline.
 
-Do not introduce a second language. We call hosted APIs over HTTP and have no model code, so a Python service would add a deploy target without buying anything.
+## Providers and cost
 
-Store object keys in Postgres and serve media through signed URLs. Media bytes never go in the database.
+Use hosted APIs directly through the existing narrow adapters. No inference weights, GPUs, Python services, AI Gateway, paid fallback, or automatic generation retries.
 
-## Hosting
+- Script: Gemini gemini-3.1-flash-lite.
+- Voice: Gemini gemini-3.8-flash-tts, fixed English Kore voice, raw mono PCM at 24 kHz converted to WAV.
+- Portrait: Cloudflare Workers AI @cf/black-forest-labs/flux-1-schnell, four steps.
+- Timings: Groq whisper-large-v3-turbo, word timestamps.
 
-**The MVP runs at zero cost.** Vercel Hobby (non-commercial — charging users requires Pro), a free-tier Neon or Supabase database, R2's free tier, and the worker running on the dev machine rather than a paid container host. Do not introduce a dependency that requires a paid plan without flagging it first.
+These IDs are documentation-verified defaults. Verify access through the intended free accounts before calling them release-verified. Accounts must remain free-tier with paid billing disabled. Show "$0 within available free quotas" before generation. Quota exhaustion and provider content refusals must be shown as themselves. The shared password does not provide durable per-user quota enforcement.
 
-The web app deploys to Vercel; the worker eventually moves to a container host (Fly.io, Railway, or Render). Monorepo layout is `apps/web`, `apps/worker`, and a shared `packages/core` for schema, router, and types.
+## Output and approval
 
-**Generation steps and ffmpeg must never run on serverless.** Serverless execution timeouts, the absence of persistent workers, and bundle size limits all rule it out, and our jobs take minutes by design. Anything slow belongs in the worker, which the web app reaches only by writing a job row — the two halves never call each other directly.
+Output is fixed at 720 x 1280, 30 fps, 15 seconds, H.264/AAC MP4. No configurable formats in v1.
 
-When adding code to `apps/web`, respect these:
+Scene sequence: presenter/product from 0–3 seconds, product/benefit from 3–11 seconds, presenter/product with Learn more from 11–15 seconds. Fit the actual packshot proportionally; keep the product and portrait as separate composition inputs.
 
-- Uploads use presigned URLs straight to object storage. Never route file bytes through an API route; serverless bodies cap near 4.5 MB. Serve output media from the CDN, not through a function.
-- Use the pooled Postgres connection string. The worker uses the direct one.
-- `pg-boss` `send()` is safe in a route; `work()` only ever runs in the worker.
+Script editing invalidates voice, timings, approval, and output. Product-fact changes also invalidate script. Visual-only changes preserve narration but invalidate approval and output. Freeze approved media during rendering and block duplicate submissions.
 
-## Local toolchain
+Voice synthesis and timing requests are separate so failed transcription can reuse generated audio. A completed narration includes audio, measured duration, and actual word timings. Never invent evenly distributed timestamps. Reject audio longer than 15 seconds without cutting speech or automatically regenerating. Pad shorter audio with silence.
 
-Development runs with no API keys and no rate limits. All three pieces are installed and verified on the dev machine.
+Render lazily in one worker, support cancellation, release the engine's virtual filesystem by terminating the worker, and revoke replaced Blob URLs. Warn before leaving an unfinished session. Session reauthentication must preserve the draft.
 
-- **Script generation:** Ollama serving `llama3.2:3b` at `http://localhost:11434`. The endpoint at `/v1` is OpenAI-compatible, so write the script adapter against the OpenAI SDK with an overridden base URL — switching to a hosted provider then costs a base URL and a key, not a rewrite.
-- **Voiceover:** Piper at `C:\Users\hardi\tools\piper\piper.exe` with the `en_US-lessac-medium` voice. Reads text on stdin, writes a WAV via `--output_file`. Runs roughly 5x faster than real time on CPU.
-- **Assembly:** ffmpeg 9.0.2 on `PATH`.
+## UI and verification
 
-Local inference is CPU-only — the dev machine has no CUDA GPU. That is acceptable because generation happens in background jobs where tens of seconds go unnoticed. Do not move these calls into a request handler where the latency would show.
+One plain creation screen plus a shared-password gate. Reuse existing components. No landing page, theming, animation, account management, dashboards, or mobile-browser support. Review large scene previews, script, narration, and caption transcript before export.
 
-Piper sounds recognizably synthetic. It exists to prove the pipeline, not to ship; swap in a hosted TTS before output reaches users.
+Test the real browser encoder in desktop Chrome and Edge and inspect exported MP4 metadata with ffprobe during development. Controlled API fixtures are appropriate for deterministic browser tests but never count as a live-provider smoke test. Test authentication, expiry/tampering/origin, invalid media and limits, refusals, quota errors, cancellation, retries, dependency invalidation, and a second render in the same tab.
 
-**There is no local video generation.** The integrated GPU cannot run a video model, which is why the first video path is a ffmpeg pan-and-zoom over the packshot rather than a model call.
+## Transition gate
 
-## Constraints
+Do not remove the old worker, embedded database, project schema/routes, or pg-boss infrastructure until a live free-account portrait/script/voice/timing flow has produced a browser MP4. The source is retained for this gate only; it is not part of the new runtime. The old UI is available under /legacy and /new in development. Legacy boundaries return 404 in production. Preserve existing .data files.
 
-These are settled. Raise it with the user before working around any of them.
+After the gate passes, delete unused legacy source/dependencies and this transition section. Do not silently change providers, introduce billing, or change output requirements to bypass a failed feasibility check.
 
-- **Hosted APIs only.** No self-hosted model weights, no GPU inference in our own infrastructure.
-- **No stock avatars.** Talent comes from user prompts and user-uploaded references. Do not add an avatar library.
-- **Composite the real packshot.** The user's actual product photo goes into the frame. Do not generate invented packaging as the default path.
-- **ffmpeg for assembly.** Cut, stitch, overlay, and captions all go through ffmpeg rather than a hosted editing service.
-- **API before client.** Mobile ships later against the same API, so keep product logic in the API and out of the web app.
+## Deployment
 
-## UI scope
-
-Keep it minimal — the product is the pipeline. Three screens: project list, new-project form, project detail with status, stills approval, and a video player.
-
-Use shadcn/ui on its default theme. Do not add custom theming, animations, dark mode, a landing page, onboarding, or settings. Poll for job status rather than streaming. Use Supabase Auth's prebuilt UI instead of hand-built login forms.
-
-The approval gate screen is the exception and deserves real care: large stills, unambiguous approve and reject, and the next step's cost shown before it is incurred.
-
-## The approval gate
-
-The single biggest risk is burning API spend on a generation the user never wanted.
-
-Every expensive step must be gated behind cheap, user-approved output. Stills are approved before video generation runs. When you add a pipeline step, place it on the correct side of that gate and make the cost visible before the call, not after.
-
-## Job and schema rules
-
-- **TTS adapters return word-level timings alongside audio.** Captions drift otherwise, and fixing it later means reworking assembly.
-- **Every job carries a deadline and can reach a terminal failure state.** Provider polling hangs; without a timeout, projects sit in `processing` forever. A retry of a video generation costs money again, so retry behavior is a deliberate decision, not a default.
-- **Generations are many-per-project with one marked current.** Users re-roll stills they dislike. One-set-of-assets-per-project turns "try again" into a migration.
-- **Object storage has lifecycle rules** expiring intermediate stills, audio, and failed renders. Video grows without bound otherwise.
-- **Provider content refusals surface to the user as themselves**, not as a generic failure. Moderation rejections on prompts and uploads are expected traffic.
-
-## Pipeline shape
-
-`script (LLM) → voiceover (TTS) → video (talking-head / image-to-video) → assembly (ffmpeg) → MP4`
-
-Generation steps take minutes. They belong in the async job pipeline, never inline in a request handler. Provider calls go through the model router so a step's provider can change without touching pipeline logic.
+Vercel Root Directory is apps/web with shared workspace sources included. Build copies the pinned ffmpeg JS/WASM to same-origin static files; a licensed local caption font is bundled. No runtime media storage or native ffmpeg installation is required. Verify a preview before production promotion. Vercel Hobby requires personal non-commercial use.
