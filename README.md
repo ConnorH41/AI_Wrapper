@@ -34,7 +34,7 @@ All credentials stay on the server. Never prefix them with NEXT_PUBLIC_ or commi
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Do not paste secrets into chat or commit them. Restart the dev server after editing environment variables.
+Do not paste secrets into chat or commit them. Keep the tracked example file blank; edit only `apps/web/.env.local`. Git ignores environment variants, Vercel metadata, and private key files, but cannot protect secrets already committed. If a key enters a commit, revoke and replace it, then clean that commit from history before pushing. Restart the dev server after editing environment variables.
 
 The selected REST models are gemini-3.1-flash-lite for copy, gemini-3.8-flash-tts with voice Kore for speech, @cf/black-forest-labs/flux-1-schnell with 4 steps for portraits, and whisper-large-v3-turbo for word timestamps. These IDs are pinned in apps/web/src/lib/server/providers.ts against current documentation. Live model access and free-account quota must still be verified with your credentials before release. No automatic retries or paid provider fallback are implemented.
 

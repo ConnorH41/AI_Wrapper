@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { localPath, mediaRoot } from "@aiw/core";
+import { localPath } from "@aiw/core";
 import { NextResponse } from "next/server";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -16,9 +16,6 @@ export async function GET(
 
   try {
     const file = localPath(storageKey);
-    if (!file.startsWith(path.resolve(mediaRoot()))) {
-      return new NextResponse("Not found", { status: 404 });
-    }
     const info = await stat(file);
     if (!info.isFile()) return new NextResponse("Not found", { status: 404 });
 

@@ -35,7 +35,8 @@ export const storage: Storage = {
 
 export function localPath(key: string): string {
   const target = path.resolve(ROOT, key);
-  if (!target.startsWith(path.resolve(ROOT))) {
+  const relative = path.relative(ROOT, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error("Invalid storage key");
   }
   return target;

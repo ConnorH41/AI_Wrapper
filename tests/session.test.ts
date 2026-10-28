@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { localPath, mediaRoot } from "../packages/core/src/storage";
 import { buildCaptions, parseTimings, pcmToWav, renderPlan, wavDuration } from "../packages/core/src/session";
 import { authenticated, authorize, createSession, sessionCookie, SESSION_SECONDS } from "../apps/web/src/lib/server/session";
 import { endpoint, readBytes, readJson, sameOrigin, textField, ApiError } from "../apps/web/src/lib/server/http";
@@ -11,6 +15,27 @@ const originalEnv = { ...process.env };
 test.after(() => { process.env = originalEnv; });
 process.env.APP_ACCESS_PASSWORD = password;
 process.env.SESSION_SIGNING_SECRET = secret;
+
+test("environment examples contain no credentials and private files are ignored", () => {
+  const template = readFileSync("apps/web/.env.local.example", "utf8");
+  for (const name of ["GEMINI_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "GROQ_API_KEY", "APP_ACCESS_PASSWORD", "SESSION_SIGNING_SECRET"]) {
+    assert.equal(new RegExp(`^${name}=\\s*$`, "m").test(template), true, `${name} must be blank in the example`);
+  }
+  const privatePaths = [".env", ".env.local", ".env.production", "apps/web/.env.preview.local", "apps/web/.vercel/project.json", ".aws/credentials", "private.pem", "private.key", "private.p12", "private.pfx", "private.jks", "private.keystore"];
+  const ignored = execFileSync("git", ["check-ignore", "--no-index", "--stdin"], { input: privatePaths.join("\n"), encoding: "utf8" }).trim().split(/\r?\n/);
+  assert.deepEqual(ignored, privatePaths);
+  const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0");
+  assert.equal(tracked.some((file) => /(^|\/)\.env(?:\.|$)/.test(file) && !/\.example$/.test(file)), false, "Private environment files must not be tracked");
+});
+
+test("legacy storage rejects traversal including sibling directories sharing the root prefix", () => {
+  const root = mediaRoot();
+  assert.equal(localPath("project/product.png"), path.join(root, "project", "product.png"));
+  for (const key of ["../private.txt", `../${path.basename(root)}-backup/private.txt`, `${root}-backup/private.txt`, path.resolve(root, "../private.txt")]) {
+    assert.throws(() => localPath(key), /Invalid storage key/);
+  }
+  if (path.sep === "\\") assert.throws(() => localPath(`..\\${path.basename(root)}-backup\\private.txt`), /Invalid storage key/);
+});
 
 function request(token = "", origin = "https://app.test") {
   return new Request("https://app.test/api/script", { headers: { origin, cookie: `aiw_session=${token}` } });
