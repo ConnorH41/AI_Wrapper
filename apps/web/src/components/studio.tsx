@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { FREE_COST_LABEL, parseTimings, renderPlan, wavDuration, type ProductInput, type WordTiming } from "@aiw/core/session";
 import { api, postJson, RequestError } from "@/lib/client-api";
 import { sceneImages, validateImage } from "@/lib/images";
+import { useObjectUrl } from "@/lib/use-object-url";
+import { MotionTest } from "@/components/motion-test";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,17 +15,6 @@ import { Textarea } from "@/components/ui/textarea";
 
 type Voice = { blob: Blob; duration: number };
 type Preview = { blob: Blob; url: string; label: string };
-
-function useObjectUrl(blob: Blob | undefined): string | undefined {
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    if (!blob) { setUrl(undefined); return; }
-    const next = URL.createObjectURL(blob);
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
-  }, [blob]);
-  return url;
-}
 
 export function Studio() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -38,21 +29,32 @@ export function Studio() {
   const [voice, setVoice] = useState<Voice>();
   const [timings, setTimings] = useState<WordTiming[]>([]);
   const [previews, setPreviews] = useState<Preview[]>([]);
-  const [approved, setApproved] = useState(false);
+  const [approved, setApproved] = useState({ scenes: false, narration: false, captions: false });
   const [final, setFinal] = useState<Blob>();
   const [task, setTask] = useState<string>();
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [resetKey, setResetKey] = useState(0);
+  const [motionDirty, setMotionDirty] = useState(false);
   const active = useRef<AbortController | null>(null);
   const voiceUrl = useObjectUrl(voice?.blob);
   const videoUrl = useObjectUrl(final);
   const productUrl = useObjectUrl(packshot);
   const portraitUrl = useObjectUrl(portrait);
-  const dirty = Boolean(packshot || portrait || product.name || script);
+  const dirty = Boolean(packshot || portrait || product.name || script || motionDirty);
   const busy = Boolean(task);
-  const canRender = previews.length === 3 && Boolean(voice) && timings.length > 0 &&
-    Boolean(product.name.trim() && product.benefit.trim()) && (portraitMode === "prompt" || consent);
+  const scenesReady = previews.length === 3 && (portraitMode === "prompt" || consent);
+  const canRender = scenesReady && Boolean(voice) && timings.length > 0 &&
+    Boolean(product.name.trim() && product.benefit.trim()) && approved.scenes && approved.narration && approved.captions;
+  const exportRequirements = [
+    previews.length !== 3 ? "Add both images, a product name, and a benefit to prepare scene previews." :
+      !scenesReady ? "Confirm likeness consent in step 1 before approving the scenes." :
+        !approved.scenes ? "Review and approve all three scenes below." : undefined,
+    !voice ? "Generate narration in step 2, then listen to and approve it." :
+      !approved.narration ? "Listen to and approve the narration in step 2." : undefined,
+    !timings.length ? "Generate caption timings in step 2, then review and approve the transcript." :
+      !approved.captions ? "Review and approve the caption transcript in step 2." : undefined,
+  ].filter((requirement) => requirement !== undefined);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -98,7 +100,7 @@ export function Studio() {
   }, [packshot, portrait, product.name, product.benefit]);
 
   function invalidate(kind: "facts" | "script" | "visual") {
-    setApproved(false); setFinal(undefined);
+    setApproved({ scenes: false, narration: false, captions: false }); setFinal(undefined);
     if (kind !== "visual") { setVoice(undefined); setTimings([]); }
     if (kind === "facts") setScript("");
   }
@@ -135,7 +137,7 @@ export function Studio() {
   function reset() {
     setProduct({ name: "", benefit: "", direction: "" }); setPackshot(undefined); setPortrait(undefined);
     setAvatarPrompt(""); setPortraitMode("upload"); setConsent(false); setScript(""); setVoice(undefined);
-    setTimings([]); setPreviews([]); setApproved(false); setFinal(undefined); setProgress(0); setError(""); setResetKey((value) => value + 1);
+    setTimings([]); setPreviews([]); setApproved({ scenes: false, narration: false, captions: false }); setFinal(undefined); setProgress(0); setError(""); setMotionDirty(false); setResetKey((value) => value + 1);
   }
 
   const factsReady = Boolean(product.name.trim() && product.benefit.trim());
@@ -154,7 +156,7 @@ export function Studio() {
         </Card>
       ) : null}
       <div hidden={!authenticated} className="space-y-6">
-        <p className="text-sm text-muted-foreground">{FREE_COST_LABEL}. Generation uses shared provider quotas. Nothing is saved after a refresh.</p>
+        <p className="text-sm text-muted-foreground">{FREE_COST_LABEL}. Generation uses shared provider quotas. Your draft is not saved in this app. Refreshing clears it.</p>
         <Card><CardHeader><CardTitle>1. Product and presenter</CardTitle></CardHeader><CardContent>
           <fieldset disabled={busy} className="space-y-5">
             <div className="space-y-2"><Label htmlFor="product-file">Product photo</Label><input key={`product-${resetKey}`} id="product-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; void run("Checking product image", (signal) => upload(file, "product", signal)); }} className="block w-full text-sm" /><p className="text-xs text-muted-foreground">JPEG, PNG, or WebP, up to 10 MB. Your real product photo stays in the browser.</p>
@@ -177,7 +179,8 @@ export function Studio() {
             {portraitUrl ? <img src={portraitUrl} alt="Selected presenter portrait" className="max-h-48 max-w-full object-contain" /> : null}
           </fieldset>
         </CardContent></Card>
-        <Card><CardHeader><CardTitle>2. Script and narration</CardTitle><CardDescription>Review the copy before generating speech. Presenter portraits remain still; this version has no lip-sync.</CardDescription></CardHeader><CardContent className="space-y-4">
+        <MotionTest key={`motion-${resetKey}`} portrait={portrait} allowed={portraitMode === "prompt" || consent} busy={busy} run={run} onDirtyChange={setMotionDirty} />
+        <Card><CardHeader><CardTitle>2. Script and narration</CardTitle><CardDescription>Review the copy before generating speech. Presenter portraits remain still in the product ad; this version has no lip-sync.</CardDescription></CardHeader><CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">{FREE_COST_LABEL}. Each generation is an explicit request.</p>
           <Button type="button" variant="outline" disabled={busy || !factsReady} onClick={() => void run("Generating script", async (signal) => {
             const response = await api("script", postJson(product), signal); const body: unknown = await response.json();
@@ -189,19 +192,21 @@ export function Studio() {
             const response = await api("voice", postJson({ script }), signal); const blob = await response.blob();
             const duration = wavDuration(new Uint8Array(await blob.arrayBuffer()));
             if (duration > 15) throw new Error("Narration exceeds 15 seconds. Shorten the script and regenerate.");
-            signal.throwIfAborted(); setVoice({ blob, duration }); setTimings([]); setApproved(false); setFinal(undefined);
+            signal.throwIfAborted(); setVoice({ blob, duration }); setTimings([]); setApproved((current) => ({ ...current, narration: false, captions: false })); setFinal(undefined);
           })}>{voice ? "Regenerate narration" : "Generate narration"}</Button>
           {voice && voiceUrl ? <div className="space-y-2"><audio controls src={voiceUrl} className="w-full" aria-label="Narration preview" /><p className="text-sm">Narration: {voice.duration.toFixed(1)} seconds. The video will be 15 seconds.</p>
             <p className="text-xs text-muted-foreground">{FREE_COST_LABEL}. Caption timing reuses this audio.</p>
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void run("Generating caption timings", async (signal) => { setApproved(false); setFinal(undefined); await generateTimings(voice.blob, voice.duration, signal); })}>{timings.length ? "Regenerate caption timings" : "Generate caption timings"}</Button>
+            <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved.narration} disabled={busy} onChange={(event) => setApproved((current) => ({ ...current, narration: event.target.checked }))} /><span>I approve this narration.</span></label>
+            <Button type="button" variant="outline" disabled={busy} onClick={() => void run("Generating caption timings", async (signal) => { setApproved((current) => ({ ...current, captions: false })); setFinal(undefined); await generateTimings(voice.blob, voice.duration, signal); })}>{timings.length ? "Regenerate caption timings" : "Generate caption timings"}</Button>
           </div> : null}
-          {timings.length ? <div className="rounded-md border p-3"><p className="text-sm font-medium">Caption transcript</p><p className="mt-1 text-sm">{timings.map(({ word }) => word).join(" ")}</p><p className="mt-2 text-xs text-muted-foreground">Check product names before approval.</p></div> : null}
+          {timings.length ? <div className="space-y-3 rounded-md border p-3"><p className="text-sm font-medium">Caption transcript</p><p className="text-sm">{timings.map(({ word }) => word).join(" ")}</p><p className="text-xs text-muted-foreground">Check product names before approval.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved.captions} disabled={busy} onChange={(event) => setApproved((current) => ({ ...current, captions: event.target.checked }))} /><span>I approve this caption transcript.</span></label></div> : null}
         </CardContent></Card>
-        <Card><CardHeader><CardTitle>3. Approve and export</CardTitle><CardDescription>Review every scene and the narration before creating the MP4.</CardDescription></CardHeader><CardContent className="space-y-5">
+        <Card><CardHeader><CardTitle>3. Approve and export</CardTitle><CardDescription>Approve the scenes here, and the narration and caption transcript in step 2. All three approvals are required.</CardDescription></CardHeader><CardContent className="space-y-5">
           {previews.length ? <div className="grid gap-4 md:grid-cols-3">{previews.map((preview) => <figure key={preview.url}><img src={preview.url} alt={`Scene preview, ${preview.label}`} className="aspect-[9/16] w-full rounded-md border" /><figcaption className="mt-2 text-sm">{preview.label}</figcaption></figure>)}</div> : <p className="text-sm text-muted-foreground">Add both images, a product name, and a benefit to prepare the three scene previews.</p>}
-          <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved} disabled={busy || !canRender} onChange={(event) => setApproved(event.target.checked)} /><span>I approve these scenes, the narration, and the caption transcript.</span></label>
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved.scenes} disabled={busy || !scenesReady} onChange={(event) => setApproved((current) => ({ ...current, scenes: event.target.checked }))} /><span>I approve all three scenes.</span></label>
+          <div aria-live="polite" className="rounded-md border p-3 text-sm">{exportRequirements.length ? <><p className="font-medium">Before you can export:</p><ul aria-label="Export requirements" className="mt-2 list-disc space-y-1 pl-5">{exportRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></> : <p>Scenes, narration, and captions approved. Ready to export.</p>}</div>
           <p className="text-sm text-muted-foreground">Export cost: $0. Rendering uses this computer’s browser and keeps the actual product photo intact.</p>
-          <Button type="button" disabled={busy || !canRender || !approved} onClick={() => void run("Rendering video", async (signal) => {
+          <Button type="button" disabled={busy || !canRender} onClick={() => void run("Rendering video", async (signal) => {
             if (!voice) return;
             setProgress(0); setFinal(undefined);
             const { renderVideo } = await import("@/lib/render");

@@ -18,7 +18,7 @@ process.env.SESSION_SIGNING_SECRET = secret;
 
 test("environment examples contain no credentials and private files are ignored", () => {
   const template = readFileSync("apps/web/.env.local.example", "utf8");
-  for (const name of ["GEMINI_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "GROQ_API_KEY", "APP_ACCESS_PASSWORD", "SESSION_SIGNING_SECRET"]) {
+  for (const name of ["GEMINI_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "GROQ_API_KEY", "HF_TOKEN", "APP_ACCESS_PASSWORD", "SESSION_SIGNING_SECRET"]) {
     assert.equal(new RegExp(`^${name}=\\s*$`, "m").test(template), true, `${name} must be blank in the example`);
   }
   const privatePaths = [".env", ".env.local", ".env.production", "apps/web/.env.preview.local", "apps/web/.vercel/project.json", ".aws/credentials", "private.pem", "private.key", "private.p12", "private.pfx", "private.jks", "private.keystore"];
