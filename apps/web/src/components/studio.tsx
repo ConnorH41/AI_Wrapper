@@ -24,6 +24,7 @@ export function Studio() {
   const [error, setError] = useState("");
   const [resetKey, setResetKey] = useState(0);
   const [motionDirty, setMotionDirty] = useState(false);
+  const [replacementPending, setReplacementPending] = useState(false);
   const active = useRef<AbortController | null>(null);
   const portraitUrl = useObjectUrl(portrait);
   const dirty = Boolean(portrait || avatarPrompt || motionDirty);
@@ -88,14 +89,14 @@ export function Studio() {
       </form></CardContent>
     </Card> : null}
     <div hidden={!authenticated} className="space-y-6">
-      <p className="text-sm text-muted-foreground">{FREE_COST_LABEL}. Generation uses shared provider quotas. Your draft is not saved in this app. Refreshing clears it.</p>
-      <Card><CardHeader><CardTitle>1. Choose your character</CardTitle><CardDescription>Upload a clear portrait or describe a fictional adult character.</CardDescription></CardHeader><CardContent>
-        <fieldset disabled={busy} className="space-y-5">
-          <div className="space-y-2"><Label htmlFor="portrait-mode">Character source</Label><select id="portrait-mode" value={portraitMode} onChange={(event) => { setPortraitMode(event.target.value === "prompt" ? "prompt" : "upload"); setPortrait(undefined); setConsent(false); }} className="block h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="upload">Upload a portrait</option><option value="prompt">Describe a fictional character</option></select></div>
-          {portraitMode === "upload" ? <div className="space-y-3"><Label htmlFor="portrait-file">Character portrait</Label><input key={`portrait-${resetKey}`} id="portrait-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+      <p className="text-sm text-muted-foreground">Video cost and provider are shown below before generation. Your draft is not saved in this app. Refreshing clears it.</p>
+      <Card><CardHeader><CardTitle>1. Choose your character</CardTitle><CardDescription>Upload a clear character reference or describe a fictional adult, including their outfit.</CardDescription></CardHeader><CardContent>
+        <fieldset disabled={busy || replacementPending} className="space-y-5">
+          <div className="space-y-2"><Label htmlFor="portrait-mode">Character source</Label><select id="portrait-mode" value={portraitMode} onChange={(event) => { setPortraitMode(event.target.value === "prompt" ? "prompt" : "upload"); setPortrait(undefined); setConsent(false); }} className="block h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="upload">Upload a character image</option><option value="prompt">Describe a fictional character</option></select></div>
+          {portraitMode === "upload" ? <div className="space-y-3"><Label htmlFor="portrait-file">Character reference</Label><input key={`portrait-${resetKey}`} id="portrait-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) void run("Checking character image", async (signal) => { await validateImage(file); signal.throwIfAborted(); setPortrait(file); setConsent(false); });
-          }} className="block w-full text-sm" /><p className="text-xs text-muted-foreground">JPEG, PNG, or WebP, up to 10 MB. Use a clear, front-facing portrait.</p>
+          }} className="block w-full text-sm" /><p className="text-xs text-muted-foreground">JPEG, PNG, or WebP, up to 10 MB. For a whole-character change, show the hairstyle, outfit and complete body clearly, with an unobstructed face.</p>
             <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have the right to use this person’s likeness and their consent to appear in this video.</span></label>
           </div> : <div className="space-y-3"><Label htmlFor="avatar-prompt">Character description</Label><Textarea id="avatar-prompt" maxLength={1700} value={avatarPrompt} onChange={(event) => { setAvatarPrompt(event.target.value); setPortrait(undefined); }} placeholder="A friendly adult with short dark hair, wearing a blue shirt." />
             <p className="text-xs text-muted-foreground">{FREE_COST_LABEL}. Creates one fictional adult portrait.</p>
@@ -104,8 +105,8 @@ export function Studio() {
           {portraitUrl ? <img src={portraitUrl} alt="Selected character" className="max-h-64 max-w-full rounded-md object-contain" /> : null}
         </fieldset>
       </CardContent></Card>
-      <MotionTest key={`motion-${resetKey}`} portrait={portrait} allowed={portraitMode === "prompt" || consent} busy={busy} run={run} onDirtyChange={setMotionDirty} />
-      <div className="flex flex-wrap gap-3"><Button type="button" variant="outline" disabled={busy} onClick={reset}>Start over</Button><Button type="button" variant="ghost" disabled={busy} onClick={() => void run("Signing out", async (signal) => { await api("session", { method: "DELETE" }, signal); reset(); setAuthenticated(false); })}>Sign out</Button></div>
+      <MotionTest key={`motion-${resetKey}`} portrait={portrait} allowed={portraitMode === "prompt" || consent} busy={busy} authenticated={authenticated === true} pending={replacementPending} onPendingChange={setReplacementPending} run={run} onDirtyChange={setMotionDirty} />
+      <div className="flex flex-wrap gap-3"><Button type="button" variant="outline" disabled={busy || replacementPending} onClick={reset}>Start over</Button><Button type="button" variant="ghost" disabled={busy || replacementPending} onClick={() => void run("Signing out", async (signal) => { await api("session", { method: "DELETE" }, signal); reset(); setAuthenticated(false); })}>Sign out</Button></div>
     </div>
     {task ? <div role="status" className="sticky bottom-3 space-y-2 rounded-lg border bg-background p-4"><p className="text-sm">{task}…</p><Button type="button" size="sm" variant="outline" onClick={() => active.current?.abort()}>Cancel</Button></div> : null}
   </div>;

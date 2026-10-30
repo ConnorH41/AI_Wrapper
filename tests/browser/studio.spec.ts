@@ -13,11 +13,12 @@ async function picture(page: Page, label: string, color: string) {
   return Buffer.from(data, "base64");
 }
 
-async function login(page: Page) {
+async function login(page: Page, free = true) {
   await page.goto("/studio");
   await page.getByLabel("Shared password", { exact: true }).fill("test-password-at-least-sixteen");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByLabel("Character source", { exact: true })).toBeVisible();
+  if (free) await page.getByLabel("Replacement method", { exact: true }).selectOption("free");
   expect(await page.evaluate(async () => {
     const body: unknown = await (await fetch("/api/session")).json();
     return typeof body === "object" && body !== null && "authenticated" in body && body.authenticated === true;
@@ -25,7 +26,7 @@ async function login(page: Page) {
 }
 
 async function chooseCharacter(page: Page) {
-  await page.getByLabel("Character portrait", { exact: true }).setInputFiles({ name: "character.png", mimeType: "image/png", buffer: await picture(page, "CHARACTER", "#324c83") });
+  await page.getByLabel("Character reference", { exact: true }).setInputFiles({ name: "character.png", mimeType: "image/png", buffer: await picture(page, "CHARACTER", "#324c83") });
   await page.getByText("I have the right to use this person", { exact: false }).click();
 }
 
@@ -104,7 +105,7 @@ test("prompted characters preserve the scene through errors and reauthentication
 
 test("invalid portrait uploads preserve the selected character and excessive API inputs are rejected", async ({ page }) => {
   await login(page); await chooseCharacter(page);
-  const upload = page.getByLabel("Character portrait", { exact: true });
+  const upload = page.getByLabel("Character reference", { exact: true });
   await upload.setInputFiles({ name: "fake.png", mimeType: "image/png", buffer: Buffer.from("This is not an image") });
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("contents do not match");
   await expect(page.getByAltText("Selected character", { exact: true })).toBeVisible();
@@ -140,7 +141,7 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   await page.route(`${MOTION.host}/gradio_api/call/animate_scene/*`, async (route) => {
     streams++;
     if (hold) await new Promise((resolve) => setTimeout(resolve, 1500));
-    await route.fulfill({ contentType: "text/event-stream", headers: { "Access-Control-Allow-Origin": "*" }, body: failQuota ? 'event: error\ndata: {"error":"GPU quota exceeded"}\n\n' : `event: heartbeat\ndata: null\n\nevent: complete\ndata: ${JSON.stringify([{ path }])}\n\n` }).catch(() => {});
+    await route.fulfill({ contentType: "text/event-stream", headers: { "Access-Control-Allow-Origin": "*" }, body: failQuota ? 'event: error\ndata: {"error":"GPU quota exceeded"}\n\n' : `event: heartbeat\ndata: null\n\nevent: complete\ndata: ${JSON.stringify([{ path }, null, { path }, { video: { path } }, null])}\n\n` }).catch(() => {});
   });
   await login(page);
   const generate = page.getByRole("button", { name: "Generate video", exact: true });
@@ -173,6 +174,9 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   const saved = `test-results/${testInfo.project.name}-motion-download.mp4`;
   await (await download).saveAs(saved);
   expect(await readFile(saved)).toEqual(fixture);
+  await page.getByText("Review the provider’s edit mask", { exact: true }).click();
+  await expect(page.getByLabel("Provider edit mask", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Provider background guide", { exact: true })).toBeVisible();
   await page.screenshot({ path: `test-results/${testInfo.project.name}-motion-test.png`, fullPage: true });
   failQuota = true;
   await generate.click();
@@ -203,7 +207,94 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   await expect(page.getByRole("link", { name: "Download video", exact: true })).toHaveCount(0);
   await expect(share).not.toBeChecked();
   await page.getByRole("button", { name: "Start over", exact: true }).click();
+  await expect(page.getByLabel("Replacement method", { exact: true })).toHaveValue("full-character");
+  await expect(page.getByRole("button", { name: "Generate full-character preview", exact: true })).toBeDisabled();
+  await page.getByLabel("Replacement method", { exact: true }).selectOption("free");
   await expect(share).not.toBeChecked(); await expect(generate).toBeDisabled();
+});
+
+test("full-character mode is the default and stays unavailable without paid setup, with no automatic fallback", async ({ page }, testInfo) => {
+  let paidSubmissions = 0;
+  page.on("request", (request) => { if (request.url().endsWith("/api/replacement") && request.method() === "POST") paidSubmissions++; });
+  await login(page, false);
+  await expect(page.getByLabel("Replacement method", { exact: true })).toHaveValue("full-character");
+  await expect(page.getByRole("status").filter({ hasText: "Full-character generation is not enabled" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate full-character preview", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Load demo scene", exact: true })).toHaveCount(0);
+  expect(paidSubmissions).toBe(0);
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-full-character-disabled.png`, fullPage: true });
+});
+
+test("full-character selection, paid consent, existing-job recovery, output validation and cancellation", async ({ page }, testInfo) => {
+  const fixture = await readFile("tests/fixtures/motion-scene.mp4");
+  const resultUrl = "https://v3.fal.media/files/replacement.mp4";
+  let submitted = 0;
+  let failStatus = true;
+  let invalidOutput = false;
+  let loseSubmission = false;
+  let cancellations = 0;
+  await page.route("**/api/replacement", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { available: true, maxSeconds: 5 } });
+    if (route.request().headers()["content-type"]?.includes("multipart/form-data")) {
+      submitted++;
+      const upload = route.request().postDataBuffer()!.toString();
+      expect(upload).toContain("fal-paid"); expect(upload).toContain('name="region"');
+      if (loseSubmission) return route.fulfill({ status: 502, json: { error: { message: "Submission response lost" } } });
+      return route.fulfill({ json: { ticket: "fixture-job-ticket" } });
+    }
+    const body = route.request().postDataJSON();
+    if (body.action === "cancel") { cancellations++; return route.fulfill({ json: { cancelled: true } }); }
+    if (failStatus) return route.fulfill({ status: 503, json: { error: { message: "Temporary status connection failure" } } });
+    return route.fulfill({ json: { status: "complete", url: resultUrl } });
+  });
+  await page.route(resultUrl, (route) => route.fulfill({ contentType: "video/mp4", headers: { "Access-Control-Allow-Origin": "*" }, body: invalidOutput ? Buffer.from([0, 0, 0, 12, 102, 116, 121, 112, 0, 0, 0, 0]) : fixture }));
+  await login(page, false); await chooseCharacter(page);
+  await page.getByLabel("Short scene for full-character replacement", { exact: true }).setInputFiles({ name: "short-scene.mp4", mimeType: "video/mp4", buffer: fixture });
+  await expect(page.getByLabel("Full-character source scene", { exact: true })).toBeVisible();
+  await expect.poll(() => page.getByLabel("Full-character source scene", { exact: true }).evaluate((video) => (video as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(2);
+  const generate = page.getByRole("button", { name: "Generate full-character preview", exact: true });
+  const consent = page.getByRole("checkbox", { name: /approve paid processing/ });
+  await consent.check(); await expect(generate).toBeDisabled();
+  await page.getByRole("button", { name: "Select centered person", exact: true }).click();
+  await expect(consent).not.toBeChecked(); await consent.check();
+  await expect(generate).toBeEnabled();
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-whole-person-selection.png`, fullPage: true });
+  await generate.click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Temporary status");
+  expect(submitted).toBe(1);
+  await expect(page.getByLabel("Character reference", { exact: true })).toBeDisabled();
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-recover-existing-job.png`, fullPage: true });
+  failStatus = false;
+  await page.getByRole("button", { name: "Check existing job", exact: true }).click();
+  const download = page.getByRole("link", { name: "Download full-character preview", exact: true });
+  await expect(download).toBeVisible(); expect(submitted).toBe(1);
+  await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
+  const saved = page.waitForEvent("download"); await download.click();
+  const file = await saved; const path = `test-results/${testInfo.project.name}-full-character.mp4`;
+  await file.saveAs(path); expect(await readFile(path)).toEqual(fixture);
+  invalidOutput = true; await generate.click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("unplayable");
+  await expect(download).toBeVisible(); expect(submitted).toBe(2);
+  await page.getByRole("button", { name: "Request job cancellation", exact: true }).click();
+  await expect.poll(() => cancellations).toBe(1);
+  await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
+  loseSubmission = true;
+  await generate.click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Submission response lost");
+  await expect(page.getByLabel("Character reference", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Replacement method", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Start over", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Check existing job", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Inputs are held" })).toBeVisible();
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-unconfirmed-submission.png`, fullPage: true });
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Leave this job", exact: true }).click();
+  await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
+  await expect(consent).not.toBeChecked(); expect(submitted).toBe(3);
+  await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await expect(download).toHaveCount(0); await expect(consent).not.toBeChecked();
+  await expect(generate).toBeDisabled();
 });
 
 test("live free-account motion generation through the app", async ({ page }) => {
@@ -212,7 +303,7 @@ test("live free-account motion generation through the app", async ({ page }) => 
   const referencePath = process.env.MOTION_REFERENCE_PATH;
   if (!referencePath) throw new Error("Set MOTION_REFERENCE_PATH to a non-sensitive test portrait.");
   await login(page);
-  await page.getByLabel("Character portrait", { exact: true }).setInputFiles(referencePath);
+  await page.getByLabel("Character reference", { exact: true }).setInputFiles(referencePath);
   await page.getByText("I have the right to use this person", { exact: false }).click();
   await page.getByRole("button", { name: "Load demo scene", exact: true }).click();
   await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible({ timeout: 90000 });
