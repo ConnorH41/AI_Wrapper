@@ -1,72 +1,63 @@
-# AI Wrapper
+# Character and motion studio
 
-A session-only product-video studio. Upload a real product photo, upload or describe a presenter portrait, review a script and narration, then download a 15-second vertical MP4. Presenter images remain still; v1 does not generate lip-sync or body motion.
+A session-only app for putting a chosen character into a moving scene. Upload a portrait or generate a fictional adult character, load a demo scene or upload a short MP4, review both, then generate and download a character-replacement clip.
+
+The current free prototype generates the first **two seconds at low resolution**, using the source scene's motion and audio. It does not add custom speech or lip-sync. Resolution and aspect ratio come from the motion provider; this is not a fixed 15-second ad exporter. Product uploads, product fields, ad scripts, narration, captions, and the old rendering pipeline have been removed.
 
 ## Run locally
 
-Requires Node.js 22 and npm. The session studio does not require Postgres, Ollama, Piper, or native ffmpeg.
+Requires Node.js 20.19+ and npm, with desktop Chrome or Edge.
 
 ```powershell
 npm install
-if (-not (Test-Path apps/web/.env.local)) { Copy-Item apps/web/.env.local.example apps/web/.env.local }
-# Fill in apps/web/.env.local, then:
+Copy-Item apps/web/.env.local.example apps/web/.env.local
+# Fill in the ignored .env.local privately, then:
 npm run dev
 ```
 
-Open http://localhost:3000. /studio is an alias for the same screen. Keep the tab open and download the result before refreshing; there is no project history, database, localStorage, or object storage in this flow.
+Open [the studio](http://localhost:3000/studio). Use the shared password, select your character, then choose a scene and approve external processing before generating. Refreshing or closing the tab discards the draft; download the finished clip before leaving. A warning appears when leaving unfinished work.
 
-If apps/web/.env.local already exists, preserve it and fill its empty provider fields. The local setup may already contain generated app authentication secrets.
+## Credentials and free usage
 
-## Credentials and free-tier setup
+Set these only in ignored `apps/web/.env.local` or Vercel's server environment:
 
-All credentials stay on the server. Never prefix them with NEXT_PUBLIC_ or commit .env.local.
+| Variable | Purpose |
+|---|---|
+| APP_ACCESS_PASSWORD | Shared tester password, at least 16 characters |
+| SESSION_SIGNING_SECRET | Cookie/cancellation signing secret, at least 32 characters |
+| HF_TOKEN | Read token from a free Hugging Face account; required for video generation |
+| CLOUDFLARE_ACCOUNT_ID | Optional, needed for prompted character portraits |
+| CLOUDFLARE_API_TOKEN | Optional Workers AI token for prompted character portraits |
 
-| Variable | Setup |
-| --- | --- |
-| GEMINI_API_KEY | Create a key in [Google AI Studio](https://aistudio.google.com/api-keys) in a project without paid billing. |
-| CLOUDFLARE_ACCOUNT_ID | In [Cloudflare Workers AI](https://dash.cloudflare.com/), choose Use REST API and copy Account ID. |
-| CLOUDFLARE_API_TOKEN | On that page, choose Create a Workers AI API Token and use the supplied permission template. Stay on Workers Free. |
-| GROQ_API_KEY | Create a key at [Groq](https://console.groq.com/keys); keep the account on the free plan. |
-| APP_ACCESS_PASSWORD | Shared tester password, at least 16 characters. |
-| SESSION_SIGNING_SECRET | Random secret, at least 32 characters. Generate locally using the command below. |
+Create a free [Hugging Face account](https://huggingface.co/join), verify its email, then create a dedicated [Read token](https://huggingface.co/settings/tokens). Keep paid billing disabled and do not buy inference credits. The app checks whoami-v2 before each video submission and refuses accounts unless isPro=false. Prompted portraits use Cloudflare Workers AI `@cf/black-forest-labs/flux-1-schnell` with four steps; keep that account within its free allocation too. Uploaded portraits need no Cloudflare credentials. Gemini and Groq are no longer used. Existing ignored credentials are not deleted automatically.
 
-```powershell
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-```
+The UI displays "$0 within available free quotas" before generation. Shared quotas can be exhausted or unavailable. There is no paid fallback or automatic generation retry. Cancellation is best-effort; a started remote job may still consume free GPU time. Waiting for a quota reset is not a guarantee of provider availability.
 
-Do not paste secrets into chat or commit them. Keep the tracked example file blank; edit only `apps/web/.env.local`. Git ignores environment variants, Vercel metadata, and private key files, but cannot protect secrets already committed. If a key enters a commit, revoke and replace it, then clean that commit from history before pushing. Restart the dev server after editing environment variables.
+## Media and privacy
 
-The selected REST models are gemini-3.1-flash-lite for copy, gemini-3.8-flash-tts with voice Kore for speech, @cf/black-forest-labs/flux-1-schnell with 4 steps for portraits, and whisper-large-v3-turbo for word timestamps. These IDs are pinned in apps/web/src/lib/server/providers.ts against current documentation. Live model access and free-account quota must still be verified with your credentials before release. No automatic retries or paid provider fallback are implemented.
+- Character portraits: JPEG, PNG, or WebP, up to 10 MB and 40 million pixels, decoded in the browser. Uploaded likenesses require consent.
+- Motion reference: resized locally to JPEG up to 768 pixels and 1 MiB. Server signature/dimension validation caps dimensions at 1024.
+- Uploaded scenes: MP4 up to 3 MiB, decoded in the browser, 2–15 seconds and at most 4K. Use one clearly visible person and a steady camera. Only the first two seconds are generated.
+- The app stores drafts and output only in browser memory. No database, account system, browser storage, persistent queue, or object storage is used.
+- After separate sharing consent, the public [Wan2.2-Animate Space](https://huggingface.co/spaces/alexnasa/Wan2.2-Animate-ZEROGPU) processes and temporarily hosts the character and scene. Use permitted, non-sensitive media. The app's session-only design does not control the provider's retention.
 
-[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [Groq limits](https://console.groq.com/docs/rate-limits).
+## Architecture
 
-## Creation flow
+Next.js App Router, React, TypeScript, shadcn/ui, and Tailwind. Browser-safe types and validation live in packages/core; server-only provider requests live in apps/web/src/lib/server. No inference SDK, local weights, GPU process, native ffmpeg, or ffmpeg.wasm is required.
 
-1. Enter the shared password. The server issues an HttpOnly, SameSite=Strict cookie valid for 12 hours, Secure in production.
-2. Select a product photo, name, factual benefit, and optional direction. Select one presenter image with likeness consent, or generate a fictional adult portrait. Uploads stay in browser memory.
-3. Generate or edit roughly 30 words of copy. Generate narration, then request caption timings separately. A timing failure can be retried without generating speech again.
-4. Review all three scene previews, the spoken audio, and the transcript. Approve narration under the audio player, captions under the transcript, and all three scenes under the previews. The export checklist explains any missing steps; all three approvals are required to create the MP4.
-5. Play and download the MP4. Start over clears all session media. Closing or refreshing the tab discards the draft.
+The server authenticates all generation requests with a signed 12-hour HttpOnly, SameSite=Strict cookie, Secure in production, and checks the Origin. Missing configuration fails closed. JSON bodies are limited to 16 KiB; multipart uploads stay below Vercel's payload limit. Requests have an 85-second abort deadline and a 90-second function maximum.
 
-The output is 720 x 1280, 30 fps, 15 seconds, H.264/AAC. Scenes cover presenter/product (0–3s), product/benefit (3–11s), and presenter/product with Learn more (11–15s). Real product images are proportionally fitted into the frame. Long narration is rejected without truncation. Short audio is padded with silence. Captions use returned word timings, never invented uniform timing.
+| Endpoint | Purpose |
+|---|---|
+| GET /api/session | Check authentication |
+| POST /api/session | Sign in |
+| DELETE /api/session | Sign out |
+| POST /api/avatar | Generate one character portrait |
+| POST /api/motion | Load the demo, submit a motion job, or cancel |
 
-The single-thread ffmpeg.wasm engine runs in a browser worker. Its assets are copied from locked npm packages by the predev/prebuild script; the caption font and OFL license are bundled. No WASM or font CDN requests are needed. The font stack for the app is the system default. Desktop Chrome and Edge are supported; phone browsers are outside v1.
+Motion uses the named Space in Character Swap / Low Res mode. Its raw REST request needs six inputs, including a hidden final State null omitted by its public API description. Vercel handles bounded submission. The browser keeps one continuous result stream open using an opaque job ID and downloads a bounded MP4 into memory. Reconnecting or refreshing can lose the result. HF_TOKEN stays server-only, including cancellation; cancellation tickets are signed and expire after 20 minutes. Media URLs are restricted to the fixed Space's cache paths.
 
-## API
-
-All responses are uncached. Generation routes require the signed cookie and a matching Origin header. JSON requests are limited to 16 KiB, WAV timing requests to 1 MiB. Provider requests time out within the 90-second function deadline. Provider responses are bounded below Vercel's payload limit.
-
-| Route | Request | Result |
-| --- | --- | --- |
-| GET /api/session | Cookie | authenticated boolean |
-| POST /api/session | JSON password | Signed session cookie |
-| DELETE /api/session | Matching Origin | Expire cookie |
-| POST /api/script | JSON name, benefit, direction | JSON script |
-| POST /api/avatar | JSON prompt | JPEG or PNG bytes |
-| POST /api/voice | JSON script | PCM WAV bytes, X-Audio-Duration header |
-| POST /api/timings | audio/wav body | JSON timings: word, start, end |
-
-Errors use { error: { code, message } }, with invalid_input, unauthorized, forbidden, missing_configuration, quota_exhausted, provider_refusal, timeout, or upstream_failure. Never log provider credentials, uploaded media, or script contents. The shared password is a tester gate, not per-user quota accounting. Everyone with access shares the free provider allowance. Logout clears the browser cookie; rotating the signing secret invalidates all existing cookies.
+Input changes clear dependent output and sharing consent. A failed request preserves completed inputs and an earlier successful video. Duplicate requests are blocked, generation is explicitly requested, and session reauthentication preserves the draft. Reset revokes Blob URLs and clears the session's media.
 
 ## Verification
 
@@ -75,36 +66,14 @@ npm test
 npm run typecheck
 npm run build
 npm run test:browser
-# After configuring free-tier credentials, make real provider calls:
-npm run test:live
 ```
 
-The browser tests use installed Chrome and Edge, controlled API responses, and actual ffmpeg.wasm encoding. Test audio is a fixture tone, not a real-provider narration claim. Exports and screenshots are written under ignored test-results/. Unit tests cover authentication, origins, body limits, WAV parsing, caption timing, render plans, and documented provider shapes. A separate real-provider smoke check and Vercel preview check are required before promotion.
+Browser tests use installed Chrome and Edge, controlled provider responses, and real browser media decoding/playback/downloads. They cover both character sources, scene uploads, consent, invalidation, quota failure, cancellation, a second generation, authentication, reset, and removal of the product flow. Artifacts are saved under ignored test-results/.
 
-On October 27, 2026, all 17 unit tests and 12 controlled browser tests passed, along with TypeScript and the production build. ffprobe confirmed both browser exports at the required format. The original live-provider smoke stopped at portrait generation with an upstream failure; the server logged a TypeError. Cloudflare's read-only token verification succeeded, but the complete live portrait/script/voice/timing/export flow remains unverified. The legacy removal gate remains closed.
+For an explicit real free-GPU test, set MOTION_REFERENCE_PATH to an absolute path to a permitted, non-sensitive portrait, then run `npm run test:motion`. This sends that portrait to the provider and consumes free quota. The normal regression suite does not consume inference quota. `npm run test:live` is an alias for the same motion check.
 
-To test the production bundle locally, first build, then run `$env:AIW_TEST_PRODUCTION = '1'; npm run test:browser` in PowerShell. Run builds and browser tests sequentially because both use the same Next.js output directory. The tests check cookie authentication, production-only legacy route blocking, actual encoding/playback/download, cancellation and rerendering, session recovery, image validation, and API request-size limits.
-
-The dependency audit currently reports existing Next.js/PostCSS advisories in Next's bundled PostCSS 8.4.31. The studio does not accept or process user CSS. A framework/dependency upgrade is separate from this MVP change; do not run npm audit fix --force to silently introduce a major Next.js upgrade.
+On October 27, 2026, native free-account generation produced a fresh two-second H.264/AAC clip at 640 x 352 and 30 fps. The subsequent live browser attempt reached the provider but hit free GPU quota. A successful fresh complete browser generation remains unverified; controlled tests do not establish live-provider availability. The prompted-portrait live check also failed upstream that day despite active token verification. Existing .data files remain untouched; obsolete database-backed product source and dependencies were removed when the product-ad flow was retired.
 
 ## Vercel
 
-Use Next.js with Root Directory apps/web, enable source files outside the root directory, install with the repository's npm lockfile, and run the app's build script. Configure the six variables above separately for Preview and Production. Never deploy real credentials as public variables. Verify preview generation, same-origin cookie access, static WASM/font loading, and downloaded MP4 playback before promotion.
-
-Vercel Hobby is restricted to personal, non-commercial use. Free access does not automatically make a business deployment non-commercial. [Fair-use rules](https://vercel.com/docs/limits/fair-use-guidelines).
-
-## Transition status
-
-The studio includes an optional **Character in a scene (motion test)** card below the presenter inputs. Select or generate a presenter in step 1, load the outdoor-conversation demo or upload your own MP4, review the source scene, and approve sending these test assets to the external provider. Generate, play, and download a separate two-second clip. Use one clearly visible person, a steady camera, and a clear portrait. The current 15-second product ad remains available below; motion clips are not automatically inserted into it. New-script lip-sync, generated product handling, and reference-quality commercial output remain outside this prototype.
-
-The motion provider is [Wan2.2-Animate Character Swap](https://huggingface.co/spaces/alexnasa/Wan2.2-Animate-ZEROGPU). Fresh public-sample generation has succeeded through the free account with native HTTP. The raw request needs a hidden sixth State input; the public API description omits it. Vercel submits bounded requests and keeps HF_TOKEN server-only. The browser reads a continuous result stream directly with an opaque job ID, then downloads bounded media into memory. Refreshing or losing the stream can lose the result. Cancellation is best-effort; a started remote job may still consume free quota. The community Space's availability and finite quota are not a production SLA.
-
-For the authenticated free-quota test, create a free account at [Hugging Face](https://huggingface.co/join), verify the email, then create a dedicated **Read** token at [Access Tokens](https://huggingface.co/settings/tokens). Add `HF_TOKEN` only to the ignored `apps/web/.env.local`, never the tracked example or chat. Stay on the free plan without prepaid credits. A new account can use existing Spaces; the account-age requirement in [ZeroGPU documentation](https://huggingface.co/docs/hub/spaces-zerogpu) applies to hosting your own. Initial feasibility checks used only the provider's public samples; app uploads require the separate consent described below.
-
-The app refuses motion generation unless the account is explicitly verified as free. Presenter references are resized locally to JPEG under 1 MiB. Uploaded scenes must be MP4, up to 3 MiB and 2–15 seconds; only the first two seconds are generated at low resolution. The public provider processes and temporarily hosts motion inputs and outputs. Use only permitted, non-sensitive media and give the separate upload consent. This exception does not upload the product packshot used by the existing ad renderer.
-
-For an explicit live motion browser test, set `MOTION_REFERENCE_PATH` to an absolute path to a permitted, non-sensitive test portrait, then run `npm run test:motion`. This test sends that portrait to the named Space and consumes free GPU quota. Ordinary browser tests use controlled responses and do not consume inference quota. Set optional `HF_TOKEN` on Vercel only if enabling motion tests; the original six environment variables still configure the still-image ad. No new production dependency or database is required.
-
-On October 27, 2026, native free-account generation produced a fresh H.264/AAC clip, 640 x 352 at 30 fps for two seconds. The subsequent live browser attempt through the app reached the provider but hit its free GPU quota. A successful fresh generation through the complete browser flow still needs verification after quota resets. Controlled browser tests do not establish provider availability.
-
-The previous database-backed source and dependencies are intentionally retained until a real narration plus real word-timing export succeeds using the intended free accounts. The legacy UI is available in development at /legacy and /new, and npm run dev:legacy starts the original local stack. Legacy pages, media, and server actions return 404 in production. Existing .data files are preserved. Remove this section and the legacy infrastructure only after the approved feasibility gate passes.
+Use Root Directory `apps/web` and include shared workspace sources outside it. Install using the repository's npm lockfile and run the web build script. Set the three required server variables in Preview and Production; add Cloudflare credentials only for prompted characters. No static WASM assets or runtime media storage are needed. Verify a preview, including authentication, provider CORS, cancellation and downloads, before promotion. Vercel Hobby requires personal non-commercial use. A preview deployment has not yet been verified.

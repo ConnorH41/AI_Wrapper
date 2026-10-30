@@ -30,10 +30,10 @@ export function MotionTest({ portrait, allowed, busy, run, onDirtyChange }: Prop
   useEffect(() => { onDirtyChange(Boolean(scene || demo || output)); }, [scene, demo, output, onDirtyChange]);
 
   return <Card>
-    <CardHeader><CardTitle>Character in a scene (motion test)</CardTitle><CardDescription>Use the presenter selected above in a real moving scene. This is a separate 2-second test at low resolution. The 15-second product ad below still uses portraits.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>2. Scene and motion</CardTitle><CardDescription>Your character replaces the main person in the scene and follows their motion. The current free prototype generates a 2-second clip at low resolution.</CardDescription></CardHeader>
     <CardContent className="space-y-4">
       <fieldset disabled={busy} className="space-y-4">
-        {!portrait || !allowed ? <p className="text-sm">Choose a presenter above and confirm likeness consent for an uploaded portrait.</p> : <p className="text-sm">Your selected presenter will replace the main person in the scene.</p>}
+        {!portrait || !allowed ? <p className="text-sm">Choose a character above and confirm likeness consent for an uploaded portrait.</p> : <p className="text-sm">Review your character and the source scene before generating.</p>}
         <div className="space-y-2"><Label htmlFor="motion-scene-source">Motion scene source</Label><select id="motion-scene-source" value={mode} onChange={(event) => { setMode(event.target.value === "upload" ? "upload" : "demo"); setScene(undefined); setDemo(undefined); }} className="block h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="demo">Outdoor conversation (provider demo, testing only)</option><option value="upload">Upload my own short scene</option></select></div>
         {mode === "demo" ? <Button type="button" variant="outline" onClick={() => void run("Loading motion scene", async (signal) => {
           const response = await api("motion", postJson({ action: "preview" }), signal);
@@ -45,8 +45,8 @@ export function MotionTest({ portrait, allowed, busy, run, onDirtyChange }: Prop
           if (file) void run("Checking motion scene", async (signal) => { await validateMotionScene(file); signal.throwIfAborted(); setScene(file); });
         }} /><p className="text-xs text-muted-foreground">MP4 up to 3 MB, 2–15 seconds. Use one clearly visible person and a steady camera. Only the first 2 seconds are generated.</p></div>}
         {(mode === "demo" ? demo : sceneUrl) ? <video controls preload="metadata" src={mode === "demo" ? demo : sceneUrl} aria-label="Source motion scene" className="max-h-80 w-full rounded-md border" /> : null}
-        <p className="text-sm text-muted-foreground">$0 within available free quotas. Generation uses the shared Hugging Face free GPU allowance and may queue for several minutes. New script lip-sync and product handling are not included; source-scene audio is retained.</p>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have permission to use these test assets and approve sending the presenter and scene to the public <a href={`https://huggingface.co/spaces/${MOTION.space}`} target="_blank" rel="noreferrer" className="underline">Hugging Face motion demo</a>. I will use non-sensitive media; the provider processes and temporarily hosts these files.</span></label>
+        <p className="text-sm text-muted-foreground">$0 within available free quotas. Generation uses the shared Hugging Face free GPU allowance and may queue for several minutes. Source-scene audio is retained; custom speech and lip-sync are not available.</p>
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have permission to use this media and approve sending the character and scene to the public <a href={`https://huggingface.co/spaces/${MOTION.space}`} target="_blank" rel="noreferrer" className="underline">Hugging Face motion demo</a>. I will use non-sensitive media; the provider processes and temporarily hosts these files.</span></label>
         <Button type="button" disabled={!portrait || !allowed || !consent || !(mode === "demo" ? demo : scene)} onClick={() => void run("Generating character replacement", async (signal) => {
           if (!portrait) return;
           setNotice("");
@@ -62,7 +62,7 @@ export function MotionTest({ portrait, allowed, busy, run, onDirtyChange }: Prop
             const video = await receiveMotion(job, signal);
             signal.throwIfAborted(); setOutput(video); completed = true;
           } catch (reason) {
-            const message = signal.aborted ? "Cancelled. Your inputs are preserved." : reason instanceof Error ? reason.message : "The motion test could not finish.";
+            const message = signal.aborted ? "Cancelled. Your inputs are preserved." : reason instanceof Error ? reason.message : "The video could not finish.";
             setNotice(`${message} Remote cancellation is best-effort; a started job may still consume free GPU time.`);
             throw reason;
           } finally {
@@ -70,10 +70,10 @@ export function MotionTest({ portrait, allowed, busy, run, onDirtyChange }: Prop
               await api("motion", postJson({ action: "cancel", ticket: job.cancelTicket }), AbortSignal.timeout(10000)).catch(() => {});
             }
           }
-        })}>Generate motion test</Button>
+        })}>Generate video</Button>
       </fieldset>
       {notice ? <p role="status" className="text-sm text-muted-foreground">{notice}</p> : null}
-      {outputUrl ? <div className="space-y-3"><video controls src={outputUrl} aria-label="Generated character replacement" className="max-h-96 w-full rounded-md border" /><a href={outputUrl} download="character-motion-test.mp4" className="inline-block rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">Download motion test</a><p className="text-xs text-muted-foreground">Review identity, facial movement, edges, and scene consistency. This clip is not automatically inserted into the product ad.</p></div> : null}
+      {outputUrl ? <div className="space-y-3"><h3 className="font-medium">Your character video</h3><video controls src={outputUrl} aria-label="Generated character replacement" className="max-h-96 w-full rounded-md border" /><a href={outputUrl} download="character-video.mp4" className="inline-block rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">Download video</a><p className="text-xs text-muted-foreground">Review identity, facial movement, edges, and scene consistency before using the clip.</p></div> : null}
     </CardContent>
   </Card>;
 }

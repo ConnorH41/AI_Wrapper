@@ -1,13 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mkdir, readFile } from "node:fs/promises";
-import { pcmToWav } from "../../packages/core/src/session";
+import { readFile } from "node:fs/promises";
 import { MOTION, motionFileUrl, motionStreamUrl } from "../../packages/core/src/motion";
-
-const words = ["Meet", "your", "new", "reusable", "bottle.", "Take", "it", "with", "you."];
-const audio = pcmToWav(Uint8Array.from({ length: 48000 * 4 }, (_, i) => {
-  const sample = Math.round(Math.sin(Math.floor(i / 2) * 2 * Math.PI * 220 / 24000) * 5000);
-  return i % 2 === 0 ? sample & 255 : (sample >> 8) & 255;
-}));
 
 async function picture(page: Page, label: string, color: string) {
   const data = await page.evaluate(({ label, color }) => {
@@ -24,41 +17,106 @@ async function login(page: Page) {
   await page.goto("/studio");
   await page.getByLabel("Shared password", { exact: true }).fill("test-password-at-least-sixteen");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByLabel("Product name", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Character source", { exact: true })).toBeVisible();
   expect(await page.evaluate(async () => {
     const body: unknown = await (await fetch("/api/session")).json();
     return typeof body === "object" && body !== null && "authenticated" in body && body.authenticated === true;
   })).toBe(true);
 }
 
-async function fixtureApis(page: Page) {
-  await page.route("**/api/script", (route) => route.fulfill({ json: { script: words.join(" ") } }));
-  await page.route("**/api/voice", (route) => route.fulfill({ contentType: "audio/wav", body: Buffer.from(audio), headers: { "X-Audio-Duration": "4" } }));
-  await page.route("**/api/timings", (route) => route.fulfill({ json: { timings: words.map((word, i) => ({ word, start: i * 0.4, end: i * 0.4 + 0.35 })) } }));
-}
-
-async function inputs(page: Page) {
-  await page.getByLabel("Product photo", { exact: true }).setInputFiles({ name: "product.png", mimeType: "image/png", buffer: await picture(page, "REAL PRODUCT", "#156c3a") });
-  await page.getByLabel("Product name", { exact: true }).fill("Reusable bottle");
-  await page.getByLabel("Factual product benefit", { exact: true }).fill("Use it again and again");
-  await page.getByLabel("Presenter portrait", { exact: true }).setInputFiles({ name: "presenter.png", mimeType: "image/png", buffer: await picture(page, "PRESENTER", "#324c83") });
+async function chooseCharacter(page: Page) {
+  await page.getByLabel("Character portrait", { exact: true }).setInputFiles({ name: "character.png", mimeType: "image/png", buffer: await picture(page, "CHARACTER", "#324c83") });
   await page.getByText("I have the right to use this person", { exact: false }).click();
 }
 
-async function narration(page: Page) {
-  await page.getByRole("button", { name: "Generate script", exact: true }).click();
-  await expect(page.getByLabel("Editable spoken script")).toHaveValue(words.join(" "));
-  await page.getByRole("button", { name: "Generate narration", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Generate caption timings", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Generate caption timings", exact: true }).click();
-  await expect(page.getByText("Caption transcript", { exact: true })).toBeVisible();
-}
+test("the studio has only character and motion controls, and retired product routes are gone", async ({ page, request }) => {
+  await login(page);
+  await expect(page.getByRole("heading", { name: "Create a character video", exact: true })).toBeVisible();
+  await expect(page.getByLabel(/Product photo|Product name|Factual product benefit|Editable spoken script/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Generate script|Generate narration|Create MP4/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "2. Scene and motion", exact: true })).toBeVisible();
+  for (const path of ["/legacy", "/new", "/projects/00000000-0000-0000-0000-000000000000", "/api/media/example.png"]) {
+    expect((await request.get(path)).status()).toBe(404);
+  }
+  for (const path of ["/api/script", "/api/voice", "/api/timings"]) {
+    expect((await request.post(path, { data: {} })).status()).toBe(404);
+  }
+});
 
-async function approveReviews(page: Page) {
-  await page.getByRole("checkbox", { name: "I approve all three scenes.", exact: true }).check();
-  await page.getByRole("checkbox", { name: "I approve this narration.", exact: true }).check();
-  await page.getByRole("checkbox", { name: "I approve this caption transcript.", exact: true }).check();
-}
+test("password and direct provider API protection", async ({ page, request }) => {
+  for (const path of ["/api/avatar", "/api/motion"]) {
+    expect((await request.post(path, { headers: { origin: "http://127.0.0.1:3100" }, data: {} })).status()).toBe(401);
+  }
+  await page.goto("/studio");
+  await page.getByLabel("Shared password", { exact: true }).fill("wrong");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Incorrect password");
+  expect((await request.post("/api/session", { headers: { origin: "https://attacker.test" }, data: { password: "test-password-at-least-sixteen" } })).status()).toBe(403);
+});
+
+test("prompted characters preserve the scene through errors and reauthentication", async ({ page, context }, testInfo) => {
+  const scene = await readFile("tests/fixtures/motion-scene.mp4");
+  const mediaPath = `/tmp/gradio/${"b".repeat(64)}/clip.mp4`;
+  await page.route("**/api/motion", (route) => route.fulfill({ json: { url: motionFileUrl(mediaPath, "mp4") } }));
+  await page.route(`${MOTION.host}/gradio_api/file=**`, (route) => route.fulfill({ contentType: "video/mp4", headers: { "Access-Control-Allow-Origin": "*" }, body: scene }));
+  await login(page);
+  await page.getByRole("button", { name: "Load demo scene", exact: true }).click();
+  await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible();
+  await page.getByLabel("Character source", { exact: true }).selectOption("prompt");
+  await page.getByLabel("Character description", { exact: true }).fill("Friendly fictional adult with short dark hair");
+  const image = await picture(page, "GENERATED", "#74448a");
+  let fail = true;
+  let calls = 0;
+  await page.route("**/api/avatar", (route) => {
+    calls++;
+    return route.fulfill(fail ? { status: 429, json: { error: { code: "quota_exhausted", message: "Free portrait quota exhausted" } } } : { contentType: "image/png", body: image });
+  });
+  await page.getByRole("button", { name: "Generate character", exact: true }).click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Free portrait quota exhausted");
+  await expect(page.getByLabel("Character description", { exact: true })).toHaveValue("Friendly fictional adult with short dark hair");
+  expect(calls).toBe(1);
+  fail = false;
+  await page.getByRole("button", { name: "Generate character", exact: true }).click();
+  await expect(page.getByAltText("Selected character", { exact: true })).toBeVisible();
+  const share = page.getByRole("checkbox", { name: /approve sending the character and scene/ });
+  await share.check();
+  await expect(page.getByRole("button", { name: "Generate video", exact: true })).toBeEnabled();
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-character-scene-studio.png`, fullPage: true });
+  await page.getByLabel("Character description", { exact: true }).fill("Another fictional adult character");
+  await expect(share).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Generate video", exact: true })).toBeDisabled();
+  await page.unroute("**/api/avatar");
+  await context.clearCookies();
+  await page.getByRole("button", { name: "Generate character", exact: true }).click();
+  await expect(page.getByLabel("Shared password", { exact: true })).toBeVisible();
+  await page.getByLabel("Shared password", { exact: true }).fill("test-password-at-least-sixteen");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByLabel("Character description", { exact: true })).toHaveValue("Another fictional adult character");
+  await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible();
+  await page.route("**/api/avatar", async (route) => { await new Promise((resolve) => setTimeout(resolve, 1500)); await route.fulfill({ contentType: "image/png", body: image }).catch(() => {}); });
+  await page.getByRole("button", { name: "Generate character", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Cancelled");
+  await page.getByRole("button", { name: "Start over", exact: true }).click();
+  await expect(page.getByLabel("Source motion scene", { exact: true })).toHaveCount(0);
+  await expect(page.getByAltText("Selected character", { exact: true })).toHaveCount(0);
+});
+
+test("invalid portrait uploads preserve the selected character and excessive API inputs are rejected", async ({ page }) => {
+  await login(page); await chooseCharacter(page);
+  const upload = page.getByLabel("Character portrait", { exact: true });
+  await upload.setInputFiles({ name: "fake.png", mimeType: "image/png", buffer: Buffer.from("This is not an image") });
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("contents do not match");
+  await expect(page.getByAltText("Selected character", { exact: true })).toBeVisible();
+  await upload.setInputFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) });
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("could not be decoded");
+  await upload.setInputFiles({ name: "oversized.png", mimeType: "image/png", buffer: Buffer.alloc(10 * 1024 * 1024 + 1) });
+  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("10 MB");
+  await expect(page.getByText("I have the right to use this person", { exact: false }).locator("..").getByRole("checkbox")).toBeChecked();
+  const headers = { origin: "http://127.0.0.1:3100", cookie: (await page.context().cookies()).map(({ name, value }) => `${name}=${value}`).join("; ") };
+  expect((await page.context().request.post("/api/avatar", { headers, data: { prompt: "x".repeat(17000) } })).status()).toBe(413);
+  expect((await page.context().request.post("/api/avatar", { headers: { ...headers, origin: "https://attacker.test" }, data: { prompt: "adult" } })).status()).toBe(403);
+});
 
 test("motion test reviews consent, preserves an earlier clip on quota failure, supports uploads and cancels", async ({ page }, testInfo) => {
   const fixture = await readFile("tests/fixtures/motion-scene.mp4");
@@ -85,8 +143,8 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
     await route.fulfill({ contentType: "text/event-stream", headers: { "Access-Control-Allow-Origin": "*" }, body: failQuota ? 'event: error\ndata: {"error":"GPU quota exceeded"}\n\n' : `event: heartbeat\ndata: null\n\nevent: complete\ndata: ${JSON.stringify([{ path }])}\n\n` }).catch(() => {});
   });
   await login(page);
-  const generate = page.getByRole("button", { name: "Generate motion test", exact: true });
-  const share = page.getByRole("checkbox", { name: /approve sending the presenter and scene/ });
+  const generate = page.getByRole("button", { name: "Generate video", exact: true });
+  const share = page.getByRole("checkbox", { name: /approve sending the character and scene/ });
   await expect(generate).toBeDisabled();
   await page.getByRole("button", { name: "Load demo scene", exact: true }).click();
   await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible();
@@ -97,16 +155,21 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   expect(dialog.type()).toBe("beforeunload");
   await dialog.dismiss();
   await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible();
-  await inputs(page);
+  await chooseCharacter(page);
+  const likeness = page.getByRole("checkbox", { name: /right to use this person/ });
+  await likeness.uncheck(); await share.check();
+  await expect(generate).toBeDisabled();
+  await likeness.check();
+  await expect(share).not.toBeChecked();
   await share.check(); await generate.click();
-  await expect(page.getByRole("link", { name: "Download motion test", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download video", exact: true })).toBeVisible();
   const video = page.getByLabel("Generated character replacement", { exact: true });
   await expect(video).toBeVisible();
   await video.evaluate(async (element) => { if (!(element instanceof HTMLVideoElement)) throw new Error("Expected video"); element.muted = true; await element.play(); });
   await expect.poll(() => video.evaluate((element) => element instanceof HTMLVideoElement ? element.currentTime : 0)).toBeGreaterThan(0.1);
   await video.evaluate((element) => { if (element instanceof HTMLVideoElement) element.pause(); });
   const download = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Download motion test", exact: true }).click();
+  await page.getByRole("link", { name: "Download video", exact: true }).click();
   const saved = `test-results/${testInfo.project.name}-motion-download.mp4`;
   await (await download).saveAs(saved);
   expect(await readFile(saved)).toEqual(fixture);
@@ -115,11 +178,11 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   await generate.click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("free GPU quota");
   await expect(page.getByRole("status").filter({ hasText: "free GPU quota" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Download motion test", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download video", exact: true })).toBeVisible();
   expect(submitted).toBe(2);
   await page.getByLabel("Motion scene source", { exact: true }).selectOption("upload");
   await expect(share).not.toBeChecked();
-  await expect(page.getByRole("link", { name: "Download motion test", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Download video", exact: true })).toHaveCount(0);
   await page.getByLabel("Scene video", { exact: true }).setInputFiles({ name: "bad.mp4", mimeType: "video/mp4", buffer: Buffer.from("not a movie") });
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("valid MP4");
   await page.getByLabel("Scene video", { exact: true }).setInputFiles({ name: "scene.mp4", mimeType: "video/mp4", buffer: fixture });
@@ -127,14 +190,18 @@ test("motion test reviews consent, preserves an earlier clip on quota failure, s
   failQuota = false; hold = true;
   await generate.click();
   await expect.poll(() => streams).toBe(3);
+  await expect(generate).toBeDisabled();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Cancelled");
   await expect.poll(() => cancelled).toBe(2);
-  await expect(page.getByAltText("Selected presenter portrait")).toBeVisible();
+  await expect(page.getByAltText("Selected character")).toBeVisible();
   hold = false;
   await generate.click();
-  await expect(page.getByRole("link", { name: "Download motion test", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download video", exact: true })).toBeVisible();
   expect(submitted).toBe(4);
+  await chooseCharacter(page);
+  await expect(page.getByRole("link", { name: "Download video", exact: true })).toHaveCount(0);
+  await expect(share).not.toBeChecked();
   await page.getByRole("button", { name: "Start over", exact: true }).click();
   await expect(share).not.toBeChecked(); await expect(generate).toBeDisabled();
 });
@@ -145,13 +212,13 @@ test("live free-account motion generation through the app", async ({ page }) => 
   const referencePath = process.env.MOTION_REFERENCE_PATH;
   if (!referencePath) throw new Error("Set MOTION_REFERENCE_PATH to a non-sensitive test portrait.");
   await login(page);
-  await page.getByLabel("Presenter portrait", { exact: true }).setInputFiles(referencePath);
+  await page.getByLabel("Character portrait", { exact: true }).setInputFiles(referencePath);
   await page.getByText("I have the right to use this person", { exact: false }).click();
   await page.getByRole("button", { name: "Load demo scene", exact: true }).click();
   await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible({ timeout: 90000 });
-  await page.getByRole("checkbox", { name: /approve sending the presenter and scene/ }).check();
-  await page.getByRole("button", { name: "Generate motion test", exact: true }).click();
-  const result = page.getByRole("link", { name: "Download motion test", exact: true });
+  await page.getByRole("checkbox", { name: /approve sending the character and scene/ }).check();
+  await page.getByRole("button", { name: "Generate video", exact: true }).click();
+  const result = page.getByRole("link", { name: "Download video", exact: true });
   const failure = page.getByRole("alert", { name: "Studio error" });
   await result.or(failure).first().waitFor({ state: "visible", timeout: 400000 });
   if (await failure.isVisible()) throw new Error(`Live motion generation failed: ${await failure.innerText()}`);
@@ -159,195 +226,7 @@ test("live free-account motion generation through the app", async ({ page }) => 
   const video = page.getByLabel("Generated character replacement", { exact: true });
   await expect.poll(() => video.evaluate((element) => element instanceof HTMLVideoElement ? element.duration : 0)).toBeGreaterThan(1.5);
   const download = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Download motion test", exact: true }).click();
+  await page.getByRole("link", { name: "Download video", exact: true }).click();
   await (await download).saveAs("test-results/live-motion-export.mp4");
   await page.screenshot({ path: "test-results/live-motion-studio.png", fullPage: true });
-});
-
-test("independent approvals explain missing export steps and reset after edits", async ({ page }, testInfo) => {
-  await fixtureApis(page); await login(page); await inputs(page);
-  const scenes = page.getByRole("checkbox", { name: "I approve all three scenes.", exact: true });
-  const narrationApproval = page.getByRole("checkbox", { name: "I approve this narration.", exact: true });
-  const captionApproval = page.getByRole("checkbox", { name: "I approve this caption transcript.", exact: true });
-  const create = page.getByRole("button", { name: "Create MP4", exact: true });
-  await expect(page.getByAltText(/Scene preview/)).toHaveCount(3);
-  await page.screenshot({ path: `test-results/${testInfo.project.name}-approval-controls.png`, fullPage: true });
-  await scenes.check();
-  await expect(create).toBeDisabled();
-  await expect(page.getByLabel("Export requirements")).toContainText("Generate narration");
-  await page.getByLabel("Editable spoken script").fill(words.join(" "));
-  await expect(scenes).not.toBeChecked();
-  await scenes.check();
-  await page.getByRole("button", { name: "Generate narration", exact: true }).click();
-  await narrationApproval.check();
-  await expect(scenes).toBeChecked();
-  await expect(create).toBeDisabled();
-  await expect(page.getByLabel("Export requirements")).toContainText("Generate caption timings");
-  await page.getByRole("button", { name: "Generate caption timings", exact: true }).click();
-  await expect(captionApproval).not.toBeChecked();
-  await captionApproval.check();
-  await expect(create).toBeEnabled();
-  await captionApproval.uncheck();
-  await expect(create).toBeDisabled();
-  await captionApproval.check();
-  await page.getByRole("button", { name: "Regenerate caption timings", exact: true }).click();
-  await expect(captionApproval).not.toBeChecked();
-  await expect(narrationApproval).toBeChecked();
-  await expect(scenes).toBeChecked();
-  await captionApproval.check();
-  await expect(create).toBeEnabled();
-  await page.screenshot({ path: `test-results/${testInfo.project.name}-approved-reviews.png`, fullPage: true });
-  await page.getByLabel("Presenter portrait", { exact: true }).setInputFiles({ name: "new-presenter.png", mimeType: "image/png", buffer: await picture(page, "NEW PRESENTER", "#624280") });
-  await expect(scenes).not.toBeChecked();
-  await expect(scenes).toBeDisabled();
-  await expect(narrationApproval).not.toBeChecked();
-  await expect(captionApproval).not.toBeChecked();
-  await expect(page.locator("audio")).toBeVisible();
-  await expect(page.getByLabel("Export requirements")).toContainText("likeness consent");
-  await page.getByText("I have the right to use this person", { exact: false }).click();
-  await approveReviews(page);
-  await expect(create).toBeEnabled();
-  await page.getByLabel("Editable spoken script").fill("Changed copy for review.");
-  await expect(scenes).not.toBeChecked();
-  await expect(narrationApproval).toHaveCount(0);
-  await expect(captionApproval).toHaveCount(0);
-  await expect(create).toBeDisabled();
-  await page.getByRole("button", { name: "Start over", exact: true }).click();
-  await expect(scenes).not.toBeChecked();
-  await expect(scenes).toBeDisabled();
-});
-
-test("password, direct API protection, and missing origin", async ({ page, request }) => {
-  const direct = await request.post("/api/script", { headers: { origin: "http://127.0.0.1:3100" }, data: { name: "x", benefit: "x" } });
-  expect(direct.status()).toBe(401);
-  await page.goto("/studio");
-  await page.getByLabel("Shared password", { exact: true }).fill("wrong");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Incorrect password");
-  const cross = await request.post("/api/session", { headers: { origin: "https://attacker.test" }, data: { password: "test-password-at-least-sixteen" } });
-  expect(cross.status()).toBe(403);
-  if (process.env.AIW_TEST_PRODUCTION === "1") {
-    for (const path of ["/legacy", "/new", "/projects/00000000-0000-0000-0000-000000000000", "/api/media/example.png"]) {
-      expect((await request.get(path)).status()).toBe(404);
-    }
-  }
-});
-
-test("real browser MP4 export, replay, and second render with controlled provider responses", async ({ page }, testInfo) => {
-  await fixtureApis(page);
-  await login(page); await inputs(page); await narration(page);
-  await expect(page.getByAltText(/Scene preview/)).toHaveCount(3);
-  await approveReviews(page);
-  await page.getByRole("button", { name: "Create MP4", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Create MP4", exact: true })).toBeDisabled();
-  await expect(page.getByRole("link", { name: "Download MP4", exact: true })).toBeVisible({ timeout: 300000 });
-  const downloadPromise = page.waitForEvent("download"); await page.getByRole("link", { name: "Download MP4" }).click();
-  const download = await downloadPromise; await mkdir("test-results", { recursive: true });
-  await download.saveAs(`test-results/${testInfo.project.name}-export.mp4`);
-  await page.locator("video").scrollIntoViewIfNeeded();
-  await page.locator("video").evaluate(async (element) => { if (!(element instanceof HTMLVideoElement)) throw new Error("Expected video"); element.muted = true; await element.play(); });
-  await expect.poll(() => page.locator("video").evaluate((element) => { if (!(element instanceof HTMLVideoElement)) throw new Error("Expected video"); return element.currentTime; }), { timeout: 15000 }).toBeGreaterThan(0.1);
-  const info = await page.locator("video").evaluate((element) => { if (!(element instanceof HTMLVideoElement)) throw new Error("Expected video"); element.pause(); return { duration: element.duration, width: element.videoWidth, height: element.videoHeight }; });
-  expect(info.duration).toBeCloseTo(15, 1); expect(info.width).toBe(720); expect(info.height).toBe(1280);
-  await page.locator("video").evaluate((element) => { if (!(element instanceof HTMLVideoElement)) throw new Error("Expected video"); element.currentTime = 1; });
-  await page.screenshot({ path: `test-results/${testInfo.project.name}-studio.png`, fullPage: true });
-  await page.getByRole("button", { name: "Create MP4", exact: true }).click();
-  await expect(page.getByLabel("Video rendering progress")).toBeVisible();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Cancelled");
-  await expect(page.getByRole("link", { name: "Download MP4" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Create MP4", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Download MP4" })).toBeVisible({ timeout: 300000 });
-});
-
-test("prompted portrait, invalidation, timing retry, expired session, cancellation, and reset", async ({ page, context }) => {
-  await fixtureApis(page); await login(page); await inputs(page); await narration(page);
-  const portrait = await picture(page, "GENERATED", "#74448a");
-  await page.route("**/api/avatar", (route) => route.fulfill({ contentType: "image/png", body: portrait }));
-  await page.getByLabel("Presenter source").selectOption("prompt");
-  await page.getByLabel("Presenter description").fill("Friendly adult presenter");
-  await page.getByRole("button", { name: "Generate portrait", exact: true }).click();
-  await expect(page.getByText("Caption transcript", { exact: true })).toBeVisible();
-  await expect(page.getByAltText(/Scene preview/)).toHaveCount(3);
-  await page.unroute("**/api/timings");
-  let calls = 0;
-  await page.route("**/api/timings", (route) => {
-    calls++;
-    return route.fulfill(calls === 1 ? { status: 429, json: { error: { code: "quota_exhausted", message: "Free quota exhausted" } } } : { json: { timings: words.map((word, i) => ({ word, start: i * 0.4, end: i * 0.4 + 0.35 })) } });
-  });
-  await page.getByRole("button", { name: "Regenerate caption timings" }).click();
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Free quota exhausted");
-  await expect(page.locator("audio")).toBeVisible();
-  await page.getByRole("button", { name: "Regenerate caption timings" }).click();
-  await expect(page.getByRole("alert", { name: "Studio error" })).toHaveCount(0);
-  await page.getByLabel("Editable spoken script").fill("Changed spoken copy.");
-  await expect(page.locator("audio")).toHaveCount(0);
-  await expect(page.getByText("Caption transcript", { exact: true })).toHaveCount(0);
-  await page.unroute("**/api/script"); await context.clearCookies();
-  await page.getByRole("button", { name: "Regenerate script" }).click();
-  await expect(page.getByLabel("Shared password", { exact: true })).toBeVisible();
-  await page.getByLabel("Shared password", { exact: true }).fill("test-password-at-least-sixteen");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByLabel("Editable spoken script")).toHaveValue("Changed spoken copy.");
-  await page.route("**/api/voice", async (route) => { await new Promise((resolve) => setTimeout(resolve, 1500)); await route.fulfill({ contentType: "audio/wav", body: Buffer.from(audio) }).catch(() => {}); });
-  await page.getByRole("button", { name: "Generate narration", exact: true }).click();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Cancelled");
-  await page.getByRole("button", { name: "Start over", exact: true }).click();
-  await expect(page.getByLabel("Product name", { exact: true })).toHaveValue("");
-  await expect(page.getByAltText(/Scene preview/)).toHaveCount(0);
-});
-
-test("live provider smoke with real portrait, narration, word timings, and browser MP4", async ({ page }) => {
-  test.skip(process.env.RUN_LIVE_PROVIDER_TESTS !== "1", "Explicit opt-in and free-tier provider credentials are required.");
-  await login(page);
-  await page.getByLabel("Product photo", { exact: true }).setInputFiles({ name: "bottle.png", mimeType: "image/png", buffer: await picture(page, "REAL PRODUCT", "#156c3a") });
-  await page.getByLabel("Product name", { exact: true }).fill("Reusable bottle");
-  await page.getByLabel("Factual product benefit", { exact: true }).fill("Reusable for everyday drinks");
-  await page.getByLabel("Presenter source").selectOption("prompt");
-  await page.getByLabel("Presenter description").fill("Friendly fictional adult presenter wearing a plain blue shirt, simple studio portrait");
-  await page.getByRole("button", { name: "Generate portrait", exact: true }).click();
-  await expect(page.getByAltText("Selected presenter portrait")).toBeVisible({ timeout: 95000 });
-  await page.getByRole("button", { name: "Generate script", exact: true }).click();
-  await expect(page.getByLabel("Editable spoken script")).not.toHaveValue("", { timeout: 95000 });
-  await page.getByRole("button", { name: "Generate narration", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Generate caption timings", exact: true })).toBeVisible({ timeout: 95000 });
-  await page.getByRole("button", { name: "Generate caption timings", exact: true }).click();
-  await expect(page.getByText("Caption transcript", { exact: true })).toBeVisible({ timeout: 95000 });
-  await approveReviews(page);
-  await page.getByRole("button", { name: "Create MP4", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Download MP4" })).toBeVisible({ timeout: 300000 });
-  const pending = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Download MP4" }).click();
-  await (await pending).saveAs("test-results/live-provider-export.mp4");
-});
-
-test("invalid image inputs and oversized API requests preserve the draft", async ({ page }) => {
-  await fixtureApis(page); await login(page); await inputs(page);
-  await page.getByLabel("Product photo", { exact: true }).setInputFiles({ name: "fake.png", mimeType: "image/png", buffer: Buffer.from("This is not an image") });
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("contents do not match");
-  await expect(page.getByAltText("Uploaded product", { exact: true })).toBeVisible();
-  await page.getByLabel("Product photo", { exact: true }).setInputFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) });
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("could not be decoded");
-  await page.getByLabel("Product photo", { exact: true }).setInputFiles({ name: "oversized.png", mimeType: "image/png", buffer: Buffer.alloc(10 * 1024 * 1024 + 1) });
-  await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("10 MB");
-  await expect(page.getByLabel("Product name", { exact: true })).toHaveValue("Reusable bottle");
-  const headers = { origin: "http://127.0.0.1:3100", cookie: (await page.context().cookies()).map(({ name, value }) => `${name}=${value}`).join("; ") };
-  const oversizedJson = await page.context().request.post("/api/script", { headers, data: { name: "x".repeat(17000), benefit: "Reusable" } });
-  expect(oversizedJson.status()).toBe(413);
-  const oversizedAudio = await page.context().request.post("/api/timings", { headers: { ...headers, "content-type": "audio/wav" }, data: Buffer.alloc(1024 * 1024 + 1) });
-  expect(oversizedAudio.status()).toBe(413);
-  await page.getByLabel("Factual product benefit", { exact: true }).fill("WWWWW ".repeat(50).trim());
-  await expect(page.getByAltText(/Scene preview/)).toHaveCount(3);
-  const overlap = await page.getByAltText(/Scene preview, 3–11/).evaluate(async (element) => {
-    if (!(element instanceof HTMLImageElement)) throw new Error("Expected scene image");
-    const image = await createImageBitmap(await (await fetch(element.src)).blob());
-    const canvas = document.createElement("canvas"); canvas.width = 720; canvas.height = 1280;
-    const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("No canvas");
-    ctx.drawImage(image, 0, 0); image.close();
-    const pixels = ctx.getImageData(0, 370, 720, 50).data;
-    for (let i = 0; i < pixels.length; i += 4) if (pixels[i] < 60 && pixels[i + 1] < 60 && pixels[i + 2] < 60) return true;
-    return false;
-  });
-  expect(overlap).toBe(false);
 });

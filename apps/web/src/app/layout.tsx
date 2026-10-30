@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI Wrapper",
-  description: "Product photo in, short product video out.",
+  description: "Choose a character and scene to create a moving video.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               AI Wrapper
             </Link>
             <Link href="/studio" className="text-sm text-muted-foreground hover:text-foreground">
-              Session video studio
+              Character video studio
             </Link>
           </div>
         </header>

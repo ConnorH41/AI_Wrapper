@@ -2,12 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { localPath, mediaRoot } from "../packages/core/src/storage";
-import { buildCaptions, parseTimings, pcmToWav, renderPlan, wavDuration } from "../packages/core/src/session";
 import { authenticated, authorize, createSession, sessionCookie, SESSION_SECONDS } from "../apps/web/src/lib/server/session";
 import { endpoint, readBytes, readJson, sameOrigin, textField, ApiError } from "../apps/web/src/lib/server/http";
-import { generateScript, generateVoice, generateAvatar, transcribe, MODELS } from "../apps/web/src/lib/server/providers";
+import { generateAvatar, MODELS } from "../apps/web/src/lib/server/providers";
 
 const password = "test-password-at-least-sixteen";
 const secret = "test-signing-secret-at-least-thirty-two-characters";
@@ -18,7 +15,7 @@ process.env.SESSION_SIGNING_SECRET = secret;
 
 test("environment examples contain no credentials and private files are ignored", () => {
   const template = readFileSync("apps/web/.env.local.example", "utf8");
-  for (const name of ["GEMINI_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "GROQ_API_KEY", "HF_TOKEN", "APP_ACCESS_PASSWORD", "SESSION_SIGNING_SECRET"]) {
+  for (const name of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "HF_TOKEN", "APP_ACCESS_PASSWORD", "SESSION_SIGNING_SECRET"]) {
     assert.equal(new RegExp(`^${name}=\\s*$`, "m").test(template), true, `${name} must be blank in the example`);
   }
   const privatePaths = [".env", ".env.local", ".env.production", "apps/web/.env.preview.local", "apps/web/.vercel/project.json", ".aws/credentials", "private.pem", "private.key", "private.p12", "private.pfx", "private.jks", "private.keystore"];
@@ -28,17 +25,8 @@ test("environment examples contain no credentials and private files are ignored"
   assert.equal(tracked.some((file) => /(^|\/)\.env(?:\.|$)/.test(file) && !/\.example$/.test(file)), false, "Private environment files must not be tracked");
 });
 
-test("legacy storage rejects traversal including sibling directories sharing the root prefix", () => {
-  const root = mediaRoot();
-  assert.equal(localPath("project/product.png"), path.join(root, "project", "product.png"));
-  for (const key of ["../private.txt", `../${path.basename(root)}-backup/private.txt`, `${root}-backup/private.txt`, path.resolve(root, "../private.txt")]) {
-    assert.throws(() => localPath(key), /Invalid storage key/);
-  }
-  if (path.sep === "\\") assert.throws(() => localPath(`..\\${path.basename(root)}-backup\\private.txt`), /Invalid storage key/);
-});
-
 function request(token = "", origin = "https://app.test") {
-  return new Request("https://app.test/api/script", { headers: { origin, cookie: `aiw_session=${token}` } });
+  return new Request("https://app.test/api/avatar", { headers: { origin, cookie: `aiw_session=${token}` } });
 }
 
 test("shared password, signed cookies, expiry, and logout attributes", () => {
@@ -56,8 +44,8 @@ test("origin and authentication checks cannot be bypassed", () => {
   assert.throws(() => authorize(request()), /shared password/);
   assert.throws(() => authorize(request(createSession(password), "https://attacker.test")), /this app/);
   authorize(request(createSession(password)));
-  sameOrigin(new Request("http://localhost:3100/api/script", { headers: { host: "127.0.0.1:3100", origin: "http://127.0.0.1:3100" } }));
-  assert.throws(() => sameOrigin(new Request("http://localhost:3100/api/script", { headers: { host: "127.0.0.1:3100", origin: "http://localhost:3100" } })), /this app/);
+  sameOrigin(new Request("http://localhost:3100/api/avatar", { headers: { host: "127.0.0.1:3100", origin: "http://127.0.0.1:3100" } }));
+  assert.throws(() => sameOrigin(new Request("http://localhost:3100/api/avatar", { headers: { host: "127.0.0.1:3100", origin: "http://localhost:3100" } })), /this app/);
 });
 
 test("missing or weak authentication configuration fails closed", () => {
@@ -82,16 +70,6 @@ test("bounded bodies and JSON validation", async () => {
   assert.equal(timeout.status, 504);
 });
 
-test("WAV parser measures audio and rejects malformed or incompatible audio", () => {
-  const wav = pcmToWav(new Uint8Array(24000 * 2 * 3));
-  assert.equal(wavDuration(wav), 3);
-  assert.throws(() => wavDuration(wav.slice(0, -1)), /complete|truncated/);
-  const stereo = wav.slice();
-  new DataView(stereo.buffer).setUint16(22, 2, true);
-  assert.throws(() => wavDuration(stereo), /mono/);
-  assert.throws(() => pcmToWav(new Uint8Array(3)), /Invalid PCM/);
-});
-
 test("a stalled request body is cancelled at its deadline", async () => {
   let cancelled = false;
   const body = new ReadableStream<Uint8Array<ArrayBuffer>>({ cancel() { cancelled = true; } });
@@ -103,59 +81,31 @@ test("a stalled request body is cancelled at its deadline", async () => {
   } finally { clearTimeout(timer); }
 });
 
-test("captions use actual ordered timings, tolerate different transcript word counts, and remove styling controls", () => {
-  const words = parseTimings([{ word: "<b>{Hello}\\", start: 0.2, end: 0.8 }, { word: "product", start: 1.1, end: 1.8 }], 2);
-  assert.equal(buildCaptions(words), "1\n00:00:00,200 --> 00:00:01,800\nHello product\n");
-  assert.throws(() => parseTimings([], 2), /did not return/);
-  assert.throws(() => parseTimings([{ word: "late", start: 2, end: 3 }], 2), /invalid/);
-  assert.throws(() => parseTimings([{ word: "x", start: NaN, end: 1 }], 2), /invalid/);
-  assert.throws(() => parseTimings([{ word: "a", start: 1, end: 1.5 }, { word: "b", start: 0, end: 0.5 }], 2), /invalid/);
-});
-
-test("render plan covers exactly 15 seconds with the approved three scenes", () => {
-  const plan = renderPlan({ name: "Bottle", benefit: "Reusable", direction: "Friendly" });
-  assert.deepEqual(plan.map(({ start, end }) => [start, end]), [[0, 3], [3, 11], [11, 15]]);
-  assert.deepEqual(plan.map(({ text }) => text), ["Bottle", "Reusable", "Learn more"]);
-});
-
-test("provider adapters use documented REST shapes, no retries, and bounded WAV output", async () => {
+test("portrait provider preserves the free API contract, quota/refusal errors and no automatic retries", async () => {
   const previousFetch = globalThis.fetch;
-  process.env.GEMINI_API_KEY = "fixture";
   process.env.CLOUDFLARE_ACCOUNT_ID = "a".repeat(32);
   process.env.CLOUDFLARE_API_TOKEN = "fixture";
-  process.env.GROQ_API_KEY = "fixture";
-  const calls: string[] = [];
+  let calls = 0;
   globalThis.fetch = async (url, options) => {
-    calls.push(String(url));
-    if (String(url).includes(":generateContent")) {
-      assert.match(String(options?.body), /product facts/);
-      return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Meet your reusable bottle." }] } }] });
-    }
-    if (String(url).endsWith("/interactions")) {
-      assert.match(String(options?.body), /audio\/l16/);
-      return Response.json({ steps: [{ type: "model_output", content: [{ type: "audio", data: Buffer.alloc(48000).toString("base64") }] }] });
-    }
-    if (String(url).includes("cloudflare")) return Response.json({ success: true, result: { image: Buffer.from([255, 216, 255, 217]).toString("base64") } });
-    assert.equal(options?.body instanceof FormData, true);
-    return Response.json({ words: [{ word: "Hello", start: 0, end: 0.8 }] });
+    calls++;
+    assert.ok(String(url).endsWith(MODELS.avatar));
+    const body: unknown = JSON.parse(String(options?.body));
+    assert.ok(typeof body === "object" && body !== null && "prompt" in body && "steps" in body);
+    assert.match(String(body.prompt), /fictional adult character/);
+    assert.equal(body.steps, 4);
+    return Response.json({ success: true, result: { image: readFileSync("tests/fixtures/motion-portrait.jpg").toString("base64") } });
   };
   try {
-    assert.equal(await generateScript({ name: "Bottle", benefit: "Reusable", direction: "" }, AbortSignal.timeout(1000)), "Meet your reusable bottle.");
-    const voice = await generateVoice("Hello", AbortSignal.timeout(1000));
-    assert.equal(wavDuration(voice.audio), 1);
     assert.equal((await generateAvatar("Friendly adult", AbortSignal.timeout(1000))).mime, "image/jpeg");
-    assert.equal((await transcribe(voice.audio, 1, AbortSignal.timeout(1000)))[0].word, "Hello");
-    assert.equal(calls.length, 4);
-    assert.match(calls[0], new RegExp(MODELS.script));
-    globalThis.fetch = async () => new Response("quota", { status: 429 });
-    await assert.rejects(generateVoice("Hello", AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "quota_exhausted");
+    assert.equal(calls, 1);
+    globalThis.fetch = async () => { calls++; return new Response("quota", { status: 429 }); };
+    await assert.rejects(generateAvatar("Friendly adult", AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "quota_exhausted");
+    assert.equal(calls, 2);
     globalThis.fetch = async () => new Response("Content policy moderation rejection", { status: 403 });
     await assert.rejects(generateAvatar("blocked", AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "provider_refusal");
     globalThis.fetch = async () => Response.json({ success: false, errors: [{ message: "Daily allocation exceeded" }] });
     await assert.rejects(generateAvatar("adult", AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "quota_exhausted");
-    globalThis.fetch = async () => Response.json({ candidates: [{ finishReason: "SAFETY" }] });
-    await assert.rejects(generateScript({ name: "x", benefit: "x", direction: "" }, AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "provider_refusal");
-    globalThis.fetch = async () => Response.json({ steps: [{ type: "model_output", content: [{ type: "audio", data: Buffer.alloc(48000 * 16).toString("base64") }] }] });
-    await assert.rejects(generateVoice("Too long", AbortSignal.timeout(1000)), /Shorten the script/);
+    globalThis.fetch = async () => new Response("bad token", { status: 401 });
+    await assert.rejects(generateAvatar("adult", AbortSignal.timeout(1000)), (error: unknown) => error instanceof ApiError && error.code === "missing_configuration");
   } finally { globalThis.fetch = previousFetch; }
 });
