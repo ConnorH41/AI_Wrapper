@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Info } from "lucide-react";
 import { REPLACEMENT, type PersonRegion, type ReplacementJob } from "@aiw/core/replacement";
 import { api, postJson, RequestError } from "@/lib/client-api";
 import { motionPortrait, validateMotionScene } from "@/lib/motion";
@@ -9,6 +10,7 @@ import { useObjectUrl } from "@/lib/use-object-url";
 import { PersonRegionSelector } from "./person-region";
 import { SceneReviewPanel, type PreparedReview } from "./scene-review";
 import { ReplacementResult } from "./replacement-result";
+import { MediaPreview } from "./media-preview";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 
@@ -29,6 +31,7 @@ export function FullCharacterTest({ portrait, allowed, busy, authenticated, onDi
   const sceneUrl = useObjectUrl(scene);
   const guideUrl = useObjectUrl(prepared?.mask);
   const frozen = busy || Boolean(job) || unconfirmed;
+  const nextStep = busy ? "Working on this step. Your inputs are held until it finishes." : job || unconfirmed ? "Resolve the current request before starting another preview." : !portrait || !allowed ? "Choose your character and confirm likeness consent above." : !scene ? "Upload a short scene to start the local review." : !prepared ? "Complete the scene review and prepare its edit guide." : !approved ? "Inspect the edit guide and confirm your review." : !available ? "Your preparation is ready. Paid generation still needs server setup." : !consent ? "Approve paid processing when you are ready for the short test." : "Ready to generate one short preview.";
 
   useEffect(() => {
     if (!authenticated) return;
@@ -55,9 +58,9 @@ export function FullCharacterTest({ portrait, allowed, busy, authenticated, onDi
   }
 
   return <div className="space-y-5">
-    <p className="max-w-prose text-sm text-muted-foreground">Review the scene locally, confirm the character and movement, then generate a 2–5-second test. Accuracy comes before longer clips. This experimental preview may omit source audio.</p>
-    {available === false ? <p role="status" className="rounded-md border p-4 text-sm">Full-character generation is not enabled on this server yet. Paid-provider credentials and spending controls must be configured first. You can prepare your selection below or explicitly choose the experimental free preview.</p> : available === undefined ? <p role="status" className="text-sm">Checking full-character availability…</p> : <p className="text-sm font-medium">Paid processing by fal. Provider charges apply; no free fallback.</p>}
-    <fieldset disabled={frozen} className="space-y-4">
+    <p className="max-w-prose text-sm text-muted-foreground">Start with a 2–5-second scene. Check the face, hair, clothing and motion before generating. This experimental preview may omit source audio.</p>
+    {available === false ? <div role="status" className="review-note"><Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" /><p>Full-character generation is not enabled on this server yet. You can review a scene below. Paid-provider credentials and spending controls are required to generate.</p></div> : available === undefined ? <p role="status" className="text-sm">Checking full-character availability…</p> : <p className="text-sm font-medium">Paid processing by fal. Provider charges apply; no free fallback.</p>}
+    <fieldset disabled={frozen} className="space-y-5">
       <div className="space-y-2"><Label htmlFor="replacement-scene">Short scene for full-character replacement</Label><input id="replacement-scene" type="file" accept="video/mp4" className="block w-full text-sm" onChange={(event) => {
         const file = event.target.files?.[0];
         if (file) void run("Checking replacement scene", async (signal) => {
@@ -66,10 +69,12 @@ export function FullCharacterTest({ portrait, allowed, busy, authenticated, onDi
           signal.throwIfAborted(); setScene(file); setRegion(undefined);
         });
       }} /><p className="text-xs text-muted-foreground">MP4 up to 3 MB. One clearly visible person, 2–5 seconds, at most 1080p.</p></div>
-      {sceneUrl && scene ? <details open={!prepared} className="space-y-4"><summary className="cursor-pointer text-base font-semibold underline underline-offset-4">{prepared ? "Scene preparation — approved; open to edit" : "Review scene preparation"}</summary><video controls preload="auto" src={sceneUrl} aria-label="Full-character source scene" className="max-h-80 w-full rounded-md border" /><details className="space-y-3" open={!prepared}><summary className="cursor-pointer text-sm font-medium">Mark the person on the first frame</summary><PersonRegionSelector key={sceneUrl} src={sceneUrl} value={region} disabled={frozen} onChange={setRegion} /></details><SceneReviewPanel key={`review-${sceneUrl}`} scene={scene} region={region} portrait={portrait} disabled={frozen} run={run} onChange={setPrepared} /></details> : null}
-      {prepared && guideUrl ? <div className="space-y-3 border-t pt-5"><h3 className="text-lg font-semibold">Inspect the prepared edit guide</h3><video controls src={guideUrl} aria-label="Prepared whole-person edit guide" className="max-h-80 w-full rounded-md border" /><p className="max-w-prose text-sm text-muted-foreground">White is editable; black guides scene preservation. This timed guide uses your reviewed rectangles and source-frame timing. It does not isolate hair strands, hands or foreground objects.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved} onChange={(event) => { setApproved(event.target.checked); setConsent(false); }} /><span>I reviewed the scene, edit guide and generation instructions for this short test.</span></label></div> : null}
+      {sceneUrl && scene ? <details open={!prepared} className="review-disclosure space-y-5"><summary>{prepared ? "Scene preparation — approved; open to edit" : "Review scene preparation"}</summary><div className="grid items-start gap-6 md:grid-cols-2"><figure className="space-y-3"><figcaption className="text-sm font-medium">Source scene</figcaption><MediaPreview controls src={sceneUrl} aria-label="Full-character source scene" className="max-h-80" /></figure><details className="space-y-3" open={!prepared}><summary className="text-sm font-medium">Mark the person on the first frame</summary><PersonRegionSelector key={sceneUrl} src={sceneUrl} value={region} disabled={frozen} onChange={setRegion} /></details></div><SceneReviewPanel key={`review-${sceneUrl}`} scene={scene} region={region} portrait={portrait} disabled={frozen} run={run} onChange={setPrepared} /></details> : null}
+      {prepared && guideUrl ? <div className="space-y-4 border-t pt-5"><h3 className="text-lg font-semibold">Inspect the prepared edit guide</h3><div className="grid items-start gap-5 md:grid-cols-2"><MediaPreview controls src={guideUrl} aria-label="Prepared whole-person edit guide" className="max-h-72" /><div className="space-y-4"><p className="max-w-prose text-sm text-muted-foreground">White is editable; black guides scene preservation. This timed guide uses your reviewed rectangles and source-frame timing. It does not isolate hair strands, hands or foreground objects.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={approved} onChange={(event) => { setApproved(event.target.checked); setConsent(false); }} /><span>I reviewed the scene, edit guide and generation instructions for this short test.</span></label></div></div></div> : null}
+      <div className="space-y-4 border-t pt-5">
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I approve paid processing and hosting of this character, scene, reviewed instructions and edit guide by <a href="https://fal.ai" target="_blank" rel="noreferrer" className="underline">fal</a>. I have permission to use this media. Provider retention is outside this app’s control.</span></label>
-      <Button type="button" disabled={!available || !portrait || !allowed || !scene || !prepared || !approved || !consent} onClick={() => void run("Generating full-character preview", async (signal) => {
+      <p id="replacement-next-step" className="text-sm text-muted-foreground">{nextStep}</p>
+      <Button type="button" className="w-full sm:w-auto" aria-describedby="replacement-next-step" disabled={!available || !portrait || !allowed || !scene || !prepared || !approved || !consent} onClick={() => void run("Generating full-character preview", async (signal) => {
         if (!portrait || !scene || !prepared || !approved) return;
         setNotice("");
         const form = new FormData();
@@ -94,6 +99,7 @@ export function FullCharacterTest({ portrait, allowed, busy, authenticated, onDi
         }
         setJob(next); await finish(next, signal);
       })}>Generate full-character preview</Button>
+      </div>
     </fieldset>
     {job || unconfirmed ? <div className="flex flex-wrap gap-3">{job ? <><Button type="button" variant="outline" disabled={busy} onClick={() => void run("Checking existing replacement", (signal) => finish(job, signal))}>Check existing job</Button><Button type="button" variant="outline" disabled={busy} onClick={() => void run("Requesting cancellation", async (signal) => {
       await api("replacement", postJson({ action: "cancel", ticket: job.ticket }), signal);
