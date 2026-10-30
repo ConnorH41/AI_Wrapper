@@ -30,6 +30,26 @@ async function chooseCharacter(page: Page) {
   await page.getByText("I have the right to use this person", { exact: false }).click();
 }
 
+async function prepareSceneReview(page: Page) {
+  await page.getByRole("button", { name: "Select centered person", exact: true }).click();
+  await page.getByRole("button", { name: "Analyze scene locally", exact: true }).click();
+  await expect(page.getByLabel("Appearance that must match", { exact: true })).toBeVisible();
+  for (let i = 0; i < 9; i++) await page.getByRole("button", { name: "Confirm frame and continue", exact: true }).click();
+  await expect(page.getByText("Review movement and editable area — 9 frames confirmed", { exact: true })).toBeVisible();
+  await page.getByLabel("People in the shot", { exact: true }).selectOption("one");
+  await page.getByLabel("Shot continuity", { exact: true }).selectOption("continuous");
+  await page.getByLabel("Visible body in source", { exact: true }).selectOption("cropped");
+  await page.getByLabel("Face during movement", { exact: true }).selectOption("clear");
+  await page.getByLabel("Objects crossing the person", { exact: true }).selectOption("none");
+  await page.getByLabel("Character reference detail", { exact: true }).selectOption("clear");
+  await page.getByLabel("Appearance that must match", { exact: true }).fill("Red cable-knit sweater and wavy brown hair");
+  await page.getByLabel("Movement observed in this scene", { exact: true }).fill("The synthetic fixture remains still throughout this shot");
+  await page.getByRole("checkbox", { name: "I reviewed these risks and want a short test.", exact: true }).check();
+  await page.getByRole("button", { name: "Approve scene and prepare guide", exact: true }).click();
+  await expect(page.getByLabel("Prepared whole-person edit guide", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "I reviewed the scene, edit guide and generation instructions for this short test.", exact: true }).check();
+}
+
 test("the studio has only character and motion controls, and retired product routes are gone", async ({ page, request }) => {
   await login(page);
   await expect(page.getByRole("heading", { name: "Create a character video", exact: true })).toBeVisible();
@@ -238,7 +258,12 @@ test("full-character selection, paid consent, existing-job recovery, output vali
     if (route.request().headers()["content-type"]?.includes("multipart/form-data")) {
       submitted++;
       const upload = route.request().postDataBuffer()!.toString();
-      expect(upload).toContain("fal-paid"); expect(upload).toContain('name="region"');
+      expect(upload).toContain("fal-paid"); expect(upload).toContain('name="review"'); expect(upload).toContain('name="mask"');
+      const form = await new Response(Uint8Array.from(route.request().postDataBuffer()!), { headers: { "content-type": route.request().headers()["content-type"] } }).formData();
+      const review = JSON.parse(String(form.get("review")));
+      expect(review.reviewed).toBe(true); expect(review.checkpoints).toHaveLength(9);
+      expect(review.appearance).toContain("Red cable-knit sweater");
+      const mask = form.get("mask") as File; expect(mask.type).toBe("video/mp4"); expect(mask.size).toBeGreaterThan(100); expect(mask.size).toBeLessThan(256 * 1024);
       if (loseSubmission) return route.fulfill({ status: 502, json: { error: { message: "Submission response lost" } } });
       return route.fulfill({ json: { ticket: "fixture-job-ticket" } });
     }
@@ -255,10 +280,10 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   const generate = page.getByRole("button", { name: "Generate full-character preview", exact: true });
   const consent = page.getByRole("checkbox", { name: /approve paid processing/ });
   await consent.check(); await expect(generate).toBeDisabled();
-  await page.getByRole("button", { name: "Select centered person", exact: true }).click();
+  await prepareSceneReview(page);
   await expect(consent).not.toBeChecked(); await consent.check();
   await expect(generate).toBeEnabled();
-  await page.screenshot({ path: `test-results/${testInfo.project.name}-whole-person-selection.png`, fullPage: true });
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-prepared-guide.png`, fullPage: true });
   await generate.click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Temporary status");
   expect(submitted).toBe(1);
@@ -266,19 +291,32 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   await page.screenshot({ path: `test-results/${testInfo.project.name}-recover-existing-job.png`, fullPage: true });
   failStatus = false;
   await page.getByRole("button", { name: "Check existing job", exact: true }).click();
-  const download = page.getByRole("link", { name: "Download full-character preview", exact: true });
+  await expect(page.getByLabel("Replacement quality review", { exact: true })).toBeVisible();
+  await expect(page.getByAltText("Quality review generated frame", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept this preview", exact: true })).toBeDisabled();
+  await page.getByLabel("Reason to reject", { exact: true }).selectOption({ label: "Hair or outfit does not match" });
+  await page.getByRole("button", { name: "Reject this preview", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Rejected: Hair or outfit does not match" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download approved preview", exact: true })).toHaveCount(0);
+  expect(submitted).toBe(1);
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-replacement-quality-review.png`, fullPage: true });
+  for (const name of ["The face stays consistent", "Hair and clothing match", "Movement, framing and timing", "The surrounding scene", "I watched the whole clip"]) await page.getByRole("checkbox", { name: new RegExp(name) }).check();
+  await page.getByRole("button", { name: "Accept this preview", exact: true }).click();
+  const download = page.getByRole("link", { name: "Download approved preview", exact: true });
   await expect(download).toBeVisible(); expect(submitted).toBe(1);
+  await expect(consent).not.toBeChecked();
   await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
   const saved = page.waitForEvent("download"); await download.click();
   const file = await saved; const path = `test-results/${testInfo.project.name}-full-character.mp4`;
   await file.saveAs(path); expect(await readFile(path)).toEqual(fixture);
-  invalidOutput = true; await generate.click();
+  invalidOutput = true; await consent.check(); await generate.click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("unplayable");
   await expect(download).toBeVisible(); expect(submitted).toBe(2);
   await page.getByRole("button", { name: "Request job cancellation", exact: true }).click();
   await expect.poll(() => cancellations).toBe(1);
   await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
   loseSubmission = true;
+  await consent.check();
   await generate.click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Submission response lost");
   await expect(page.getByLabel("Character reference", { exact: true })).toBeDisabled();
@@ -292,9 +330,52 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   await page.getByRole("button", { name: "Leave this job", exact: true }).click();
   await expect(page.getByLabel("Character reference", { exact: true })).toBeEnabled();
   await expect(consent).not.toBeChecked(); expect(submitted).toBe(3);
-  await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await page.getByText("Scene preparation — approved; open to edit", { exact: true }).click();
+  await page.getByText("Mark the person on the first frame", { exact: true }).click();
+  await page.getByRole("button", { name: "Clear selection", exact: true }).first().click();
   await expect(download).toHaveCount(0); await expect(consent).not.toBeChecked();
   await expect(generate).toBeDisabled();
+});
+
+test("scene readiness stays local, blocks unsuitable shots and invalidates approval when instructions change", async ({ page }, testInfo) => {
+  const fixture = await readFile("tests/fixtures/motion-scene.mp4");
+  let submitted = 0;
+  await page.route("**/api/replacement", (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { available: true } });
+    submitted++; return route.fulfill({ status: 400, json: { error: { message: "No generation expected" } } });
+  });
+  await login(page, false); await chooseCharacter(page);
+  await page.getByLabel("Short scene for full-character replacement", { exact: true }).setInputFiles({ name: "scene.mp4", mimeType: "video/mp4", buffer: fixture });
+  await prepareSceneReview(page);
+  const consent = page.getByRole("checkbox", { name: /approve paid processing/ });
+  await consent.check(); await expect(page.getByRole("button", { name: "Generate full-character preview", exact: true })).toBeEnabled();
+  expect(submitted).toBe(0);
+  const guide = page.getByLabel("Prepared whole-person edit guide", { exact: true });
+  await expect.poll(() => guide.evaluate((element) => (element as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(2);
+  const pixels = await guide.evaluate((element) => {
+    const video = element as HTMLVideoElement, canvas = document.createElement("canvas"); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d")!; ctx.drawImage(video, 0, 0);
+    return { width: canvas.width, height: canvas.height, outside: ctx.getImageData(0, 0, 1, 1).data[0], inside: ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data[0], duration: video.duration };
+  });
+  expect(pixels).toMatchObject({ width: 128, height: 224 }); expect(pixels.inside).toBeGreaterThan(240); expect(pixels.outside).toBeLessThan(15); expect(pixels.duration).toBeCloseTo(2, 1);
+  await page.getByText("Scene preparation — approved; open to edit", { exact: true }).click();
+  await page.getByText("Exact generation instructions", { exact: true }).click();
+  await expect(page.getByText(/Appearance details to match: Red cable-knit sweater/)).toBeVisible();
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-scene-readiness.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-scene-readiness-narrow.png`, fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByLabel("Shot continuity", { exact: true }).selectOption("cuts");
+  await expect(page.getByText("Use one continuous shot. Trim away cuts before this test.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve scene and prepare guide", exact: true })).toBeDisabled();
+  await expect(guide).toHaveCount(0); await expect(consent).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Generate full-character preview", exact: true })).toBeDisabled();
+  await page.getByLabel("Shot continuity", { exact: true }).selectOption("continuous");
+  await page.getByLabel("Appearance that must match", { exact: true }).fill("Red sweater and brown boots visible head to toe");
+  await expect(page.getByText(/Some described details may be outside the source crop/)).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "I reviewed these risks and want a short test.", exact: true })).not.toBeChecked();
+  expect(submitted).toBe(0);
 });
 
 test("live free-account motion generation through the app", async ({ page }) => {

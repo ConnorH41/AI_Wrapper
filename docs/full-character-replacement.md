@@ -1,6 +1,6 @@
 # Full-character replacement: findings and recommended direction
 
-> This document preserves the analysis before implementation. The selected implementation is the explicit-mask VACE route, with manual first-frame region selection and paid execution disabled by default. See [replacement-setup.md](replacement-setup.md) for exactly what is implemented, the current limits and the remaining live quality/billing validation. References to files gathered in the review workspace are historical evidence locations; the public source links below are the reusable references.
+> This document preserves the analysis before implementation. The selected implementation is the explicit-mask VACE route, with paid execution disabled by default. The later [scene-readiness flow](scene-readiness.md) adds local motion measurements, nine corrected regions, exact-prompt review and a timed rectangular guide. See [replacement-setup.md](replacement-setup.md) for exactly what is implemented, the current limits and the remaining live quality/billing validation. References to files gathered in the review workspace are historical evidence locations; the public source links below are the reusable references.
 
 ## Decision
 

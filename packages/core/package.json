@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./session": "./src/session.ts",
     "./motion": "./src/motion.ts",
-    "./replacement": "./src/replacement.ts"
+    "./replacement": "./src/replacement.ts",
+    "./scene-review": "./src/scene-review.ts"
   }
 }

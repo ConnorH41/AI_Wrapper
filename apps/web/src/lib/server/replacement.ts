@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { REPLACEMENT, replacementMediaUrl, type PersonRegion, type ReplacementJob, type ReplacementStatus } from "@aiw/core/replacement";
+import { REPLACEMENT, replacementMediaUrl, type ReplacementJob, type ReplacementStatus } from "@aiw/core/replacement";
 import { ApiError, readBytes, requiredEnv } from "./http";
-import { personMask } from "./person-mask";
+import { replacementPrompt, type SceneReview } from "@aiw/core/scene-review";
 
 const QUEUE = "https://queue.fal.run";
 const JOB_PATH = "/fal-ai/wan-vace-14b/requests/";
@@ -77,11 +77,11 @@ export function parseReplacementTicket(ticket: unknown, now = Date.now()): strin
 
 // A private-prototype single-flight guard, not a durable/global spending ledger.
 const submissions = new Map<string, { expires: number; digest: string; task: Promise<ReplacementJob> }>();
-export function submitReplacement(portrait: Uint8Array, scene: Uint8Array, region: PersonRegion, requestKey: string, signal: AbortSignal): Promise<ReplacementJob> {
+export function submitReplacement(portrait: Uint8Array, scene: Uint8Array, mask: Uint8Array, review: SceneReview, requestKey: string, signal: AbortSignal): Promise<ReplacementJob> {
   requireEnabled();
   if (!/^[a-f0-9-]{36}$/i.test(requestKey)) throw new ApiError("invalid_input", "Invalid submission key.");
   for (const [key, value] of submissions) if (value.expires < Date.now()) submissions.delete(key);
-  const digest = createHash("sha256").update(portrait).update(scene).update(JSON.stringify(region)).digest("hex");
+  const digest = createHash("sha256").update(portrait).update(scene).update(mask).update(JSON.stringify(review)).digest("hex");
   const previous = submissions.get(requestKey);
   if (previous) {
     if (previous.digest !== digest) throw new ApiError("invalid_input", "This submission key belongs to different inputs.");
@@ -89,13 +89,12 @@ export function submitReplacement(portrait: Uint8Array, scene: Uint8Array, regio
   }
   if (submissions.size >= 100) throw new ApiError("quota_exhausted", "Too many replacement submissions. Wait before requesting another.", 429);
   const task = (async () => {
-    const mask = personMask(region);
     const imageUrl = await upload(portrait, "character.jpg", "image/jpeg", signal);
     const sceneUrl = await upload(scene, "scene.mp4", "video/mp4", signal);
-    const maskUrl = await upload(mask, "whole-person-guide.png", "image/png", signal);
+    const maskUrl = await upload(mask, "reviewed-edit-guide.mp4", "video/mp4", signal);
     const result = await providerJson(`${QUEUE}/${REPLACEMENT.endpoint}`, "POST", signal, {
-      video_url: sceneUrl, mask_image_url: maskUrl, ref_image_urls: [imageUrl],
-      prompt: "Replace the complete selected person with the character in the reference image, including face, hairstyle, clothing and visible body appearance. Follow the original person's motion. Preserve the surrounding scene and camera. No extra people.",
+      video_url: sceneUrl, mask_video_url: maskUrl, ref_image_urls: [imageUrl],
+      prompt: replacementPrompt(review),
       resolution: "720p", num_inference_steps: 30, acceleration: "none",
       match_input_num_frames: true, match_input_frames_per_second: true,
       enable_auto_downsample: true, enable_safety_checker: true,

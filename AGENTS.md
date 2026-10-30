@@ -6,13 +6,15 @@ The user retired the product-ad flow on October 29, 2026. The app now focuses ex
 
 The latest requirement is **full-character replacement**: reference face, hair, clothing and complete visible body appearance should replace the source person while source motion/scene are preserved. A result keeping the source outfit fails this requirement. Read docs/full-character-replacement.md for research and docs/replacement-setup.md for implemented behavior and limits.
 
-The default studio method is an experimental mask-guided VACE preview through fal, **disabled by default**. It uses a user-marked first-frame whole-person region and provider tracking, not a locally verified per-frame body mask. It requires a 2–5-second MP4, separate paid-processing consent and explicit operator enablement. Its live quality/audio behavior is unverified. The free Space is an explicitly selected diagnostic preview and may preserve the original clothing. Do not silently fall back between methods.
+The default studio method is an experimental mask-guided VACE preview through fal, **disabled by default**. Local scene analysis, nine corrected review frames, user-confirmed observations and appearance/motion instructions prepare an H.264 timed rectangular guide sent as mask_video_url. This is not semantic pose/action detection or person segmentation. Read docs/scene-readiness.md. Readiness is a preparation check, not a model-quality score. It requires a 2–5-second MP4, separate guide approval/paid-processing consent and explicit operator enablement. Its live quality/audio behavior is unverified. The free Space is an explicitly selected diagnostic preview and may preserve the original clothing. Do not silently fall back between methods.
 
 Do not restore product uploads, product facts, ad scripts, narration/captions, fixed 15-second compositions, or the obsolete product-pipeline feasibility gate. Existing .data files must remain untouched. The retired worker, embedded database, project routes/schema and queue dependencies have been removed as part of this scope change.
 
 ## Stack and commands
 
 TypeScript, Next.js App Router, React, existing shadcn/ui and Tailwind. Browser-safe types and validation live in packages/core/src/session.ts and motion.ts, imported through @aiw/core/session and @aiw/core/motion. Server-only provider adapters live under apps/web/src/lib/server. Media stays in browser memory. No database, account system, persistent queue, browser storage, object storage, workflow framework, local models, GPU, Python service, or ffmpeg assembly is required.
+
+Mediabunny is the pinned media dependency for local WebCodecs decoding/MP4 guide encoding and server-side metadata inspection. Scene review is bounded to 60 fps/310 frames and a 256 KiB guide. All nine editable regions, observations, instructions and risks must be reviewed before generation. Server metadata/readiness validation precedes provider uploads. Changing preparation invalidates approval/consent/output. Result acceptance is a user review; approved and unapproved downloads must remain clearly distinguished. Rejections never automatically spend or retry.
 
 ```powershell
 npm install

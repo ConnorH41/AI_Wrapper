@@ -2,11 +2,11 @@
 
 A session-only app for putting a complete chosen character into a moving scene. Upload a reference showing the character's face, hair and outfit, or generate a fictional adult reference, then review a short source scene before generation.
 
-The default **Full character** workflow implements an experimental mask-guided VACE preview through fal. It accepts a 2–5-second uploaded MP4 and a user-selected whole-person region. It is **disabled by default**, pending paid credentials, provider-account spending controls and an explicit operator decision. Its live output quality and audio preservation have not been verified. The selection is a first-frame guide for provider tracking, not an automatically verified full-body mask across the entire clip.
+The default **Full character** workflow includes a local scene-readiness review before an experimental mask-guided VACE preview through fal. Review nine frames, correct the editable regions, confirm appearance/motion instructions and inspect a timed guide before separately approving paid processing. Generation is **disabled by default**, pending paid credentials, provider-account spending controls and an explicit operator decision. Its live output quality and audio preservation have not been verified. The guide contains interpolated rectangles, not automatically verified person segmentation.
 
 The separately selected **Experimental free preview** uses the original Hugging Face Space. It can retain source clothing and is not a reliable full-character swap. Returned mask/background diagnostics are available for review. Neither path falls back to the other automatically.
 
-Read [the full-character research and roadmap](docs/full-character-replacement.md) and [implemented behavior and paid setup](docs/replacement-setup.md). These files contain the project findings for later review; generated user media and credentials are not committed.
+Read [the full-character research and roadmap](docs/full-character-replacement.md), [scene readiness and quality review](docs/scene-readiness.md), and [implemented behavior and paid setup](docs/replacement-setup.md). These files contain the project findings for later review; generated user media and credentials are not committed.
 
 The current free prototype generates the first **two seconds at low resolution**, using the source scene's motion and audio. It does not add custom speech or lip-sync. Resolution and aspect ratio come from the motion provider; this is not a fixed 15-second ad exporter. Product uploads, product fields, ad scripts, narration, captions, and the old rendering pipeline have been removed.
 
@@ -47,13 +47,13 @@ The free paths display "$0 within available free quotas" before provider request
 - Character references: JPEG, PNG, or WebP, up to 10 MB and 40 million pixels, decoded in the browser. Show the intended hair/outfit/body and an unobstructed face. Uploaded likenesses require consent.
 - Motion reference: resized locally to JPEG up to 768 pixels and 1 MiB. Server signature/dimension validation caps dimensions at 1024.
 - Free-preview scenes: MP4 up to 3 MiB, 2–15 seconds, at most 4K. Only the first two seconds are generated.
-- Full-character preview scenes: MP4 up to 3 MiB, trimmed to 2–5 seconds, at most 1080p/2048 pixels per dimension. A first-frame whole-person selection guides provider tracking; it does not prove an accurate body mask throughout the video. Use one clearly visible person and a steady camera.
+- Full-character preview scenes: MP4 up to 3 MiB, trimmed to 2–5 seconds, at most 1080p/2048 pixels per dimension and 60 fps. Local frame analysis and nine corrected regions prepare a timed MP4 edit guide capped at 256 KiB. Use one clearly visible person and one continuous shot. Readiness is a preparation check, not a guarantee of replacement quality.
 - The app stores drafts and output only in browser memory. No database, account system, browser storage, persistent queue, or object storage is used.
 - The free preview sends media to the public [Wan2.2-Animate Space](https://huggingface.co/spaces/alexnasa/Wan2.2-Animate-ZEROGPU). The separately consented paid path uploads character/scene/selection guide to fal and requests a one-hour media lifecycle preference. Neither that preference nor the memory-only draft guarantees provider deletion. Use permitted, non-sensitive media.
 
 ## Architecture
 
-Next.js App Router, React, TypeScript, shadcn/ui, and Tailwind. Browser-safe types and validation live in packages/core; server-only provider requests live in apps/web/src/lib/server. No inference SDK, local weights, GPU process, native ffmpeg, or ffmpeg.wasm is required.
+Next.js App Router, React, TypeScript, shadcn/ui, and Tailwind. Browser-safe types and validation live in packages/core; server-only provider requests live in apps/web/src/lib/server. Dynamically loaded Mediabunny handles local video review/guide encoding and server container inspection. No inference SDK, local weights, GPU process, native ffmpeg, or ffmpeg.wasm is required.
 
 The server authenticates all generation requests with a signed 12-hour HttpOnly, SameSite=Strict cookie, Secure in production, and checks the Origin. Missing configuration fails closed. JSON bodies are limited to 16 KiB; multipart uploads stay below Vercel's payload limit. Requests have an 85-second abort deadline and a 90-second function maximum.
 
