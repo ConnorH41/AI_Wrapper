@@ -1,6 +1,12 @@
 # Character and motion studio
 
-A session-only app for putting a chosen character into a moving scene. Upload a portrait or generate a fictional adult character, load a demo scene or upload a short MP4, review both, then generate and download a character-replacement clip.
+A session-only app for putting a complete chosen character into a moving scene. Upload a reference showing the character's face, hair and outfit, or generate a fictional adult reference, then review a short source scene before generation.
+
+The default **Full character** workflow includes a local scene-readiness review before an experimental mask-guided VACE preview through fal. Review nine frames, correct the editable regions, confirm appearance/motion instructions and inspect a timed guide before separately approving paid processing. Generation is **disabled by default**, pending paid credentials, provider-account spending controls and an explicit operator decision. Its live output quality and audio preservation have not been verified. The guide contains interpolated rectangles, not automatically verified person segmentation.
+
+The separately selected **Experimental free preview** uses the original Hugging Face Space. It can retain source clothing and is not a reliable full-character swap. Returned mask/background diagnostics are available for review. Neither path falls back to the other automatically.
+
+Read [the full-character research and roadmap](docs/full-character-replacement.md), [scene readiness and quality review](docs/scene-readiness.md), and [implemented behavior and paid setup](docs/replacement-setup.md). These files contain the project findings for later review; generated user media and credentials are not committed.
 
 The current free prototype generates the first **two seconds at low resolution**, using the source scene's motion and audio. It does not add custom speech or lip-sync. Resolution and aspect ratio come from the motion provider; this is not a fixed 15-second ad exporter. Product uploads, product fields, ad scripts, narration, captions, and the old rendering pipeline have been removed.
 
@@ -17,7 +23,7 @@ npm run dev
 
 Open [the studio](http://localhost:3000/studio). Use the shared password, select your character, then choose a scene and approve external processing before generating. Refreshing or closing the tab discards the draft; download the finished clip before leaving. A warning appears when leaving unfinished work.
 
-## Credentials and free usage
+## Credentials and provider usage
 
 Set these only in ignored `apps/web/.env.local` or Vercel's server environment:
 
@@ -25,25 +31,29 @@ Set these only in ignored `apps/web/.env.local` or Vercel's server environment:
 |---|---|
 | APP_ACCESS_PASSWORD | Shared tester password, at least 16 characters |
 | SESSION_SIGNING_SECRET | Cookie/cancellation signing secret, at least 32 characters |
-| HF_TOKEN | Read token from a free Hugging Face account; required for video generation |
+| HF_TOKEN | Free Hugging Face read token; needed only for the experimental free video preview |
 | CLOUDFLARE_ACCOUNT_ID | Optional, needed for prompted character portraits |
 | CLOUDFLARE_API_TOKEN | Optional Workers AI token for prompted character portraits |
+| FAL_KEY | Optional paid full-character provider credential; leave unset until paid setup is reviewed |
+| ENABLE_PAID_MOTION | Defaults to false; explicit operator enablement for the paid integration |
+| PAID_MOTION_BUDGET_REVIEWED | Defaults to false; acknowledges spending-control review, not an enforced/global dollar cap |
 
-Create a free [Hugging Face account](https://huggingface.co/join), verify its email, then create a dedicated [Read token](https://huggingface.co/settings/tokens). Keep paid billing disabled and do not buy inference credits. The app checks whoami-v2 before each video submission and refuses accounts unless isPro=false. Prompted portraits use Cloudflare Workers AI `@cf/black-forest-labs/flux-1-schnell` with four steps; keep that account within its free allocation too. Uploaded portraits need no Cloudflare credentials. Gemini and Groq are no longer used. Existing ignored credentials are not deleted automatically.
+For the free preview, create a free [Hugging Face account](https://huggingface.co/join), verify its email, then create a dedicated [Read token](https://huggingface.co/settings/tokens). Keep that account's paid billing disabled and do not buy inference credits. The free adapter checks whoami-v2 before each submission and refuses accounts unless isPro=false. Prompted character references use Cloudflare Workers AI `@cf/black-forest-labs/flux-1-schnell` with four steps; keep that account within its free allocation too. Uploaded references need no Cloudflare credentials. Existing ignored credentials are not deleted automatically.
 
-The UI displays "$0 within available free quotas" before generation. Shared quotas can be exhausted or unavailable. There is no paid fallback or automatic generation retry. Cancellation is best-effort; a started remote job may still consume free GPU time. Waiting for a quota reset is not a guarantee of provider availability.
+The free paths display "$0 within available free quotas" before provider requests. Shared quotas can be exhausted or unavailable. The paid path separately says charges apply and requires its own processing consent; read [setup and remaining production work](docs/replacement-setup.md) before enabling it. There is no automatic provider fallback or generation retry. Cancellation is best-effort; started processing may still consume quota or be billed.
 
 ## Media and privacy
 
-- Character portraits: JPEG, PNG, or WebP, up to 10 MB and 40 million pixels, decoded in the browser. Uploaded likenesses require consent.
+- Character references: JPEG, PNG, or WebP, up to 10 MB and 40 million pixels, decoded in the browser. Show the intended hair/outfit/body and an unobstructed face. Uploaded likenesses require consent.
 - Motion reference: resized locally to JPEG up to 768 pixels and 1 MiB. Server signature/dimension validation caps dimensions at 1024.
-- Uploaded scenes: MP4 up to 3 MiB, decoded in the browser, 2–15 seconds and at most 4K. Use one clearly visible person and a steady camera. Only the first two seconds are generated.
+- Free-preview scenes: MP4 up to 3 MiB, 2–15 seconds, at most 4K. Only the first two seconds are generated.
+- Full-character preview scenes: MP4 up to 3 MiB, trimmed to 2–5 seconds, at most 1080p/2048 pixels per dimension and 60 fps. Local frame analysis and nine corrected regions prepare a timed MP4 edit guide capped at 256 KiB. Use one clearly visible person and one continuous shot. Readiness is a preparation check, not a guarantee of replacement quality.
 - The app stores drafts and output only in browser memory. No database, account system, browser storage, persistent queue, or object storage is used.
-- After separate sharing consent, the public [Wan2.2-Animate Space](https://huggingface.co/spaces/alexnasa/Wan2.2-Animate-ZEROGPU) processes and temporarily hosts the character and scene. Use permitted, non-sensitive media. The app's session-only design does not control the provider's retention.
+- The free preview sends media to the public [Wan2.2-Animate Space](https://huggingface.co/spaces/alexnasa/Wan2.2-Animate-ZEROGPU). The separately consented paid path uploads character/scene/selection guide to fal and requests a one-hour media lifecycle preference. Neither that preference nor the memory-only draft guarantees provider deletion. Use permitted, non-sensitive media.
 
 ## Architecture
 
-Next.js App Router, React, TypeScript, shadcn/ui, and Tailwind. Browser-safe types and validation live in packages/core; server-only provider requests live in apps/web/src/lib/server. No inference SDK, local weights, GPU process, native ffmpeg, or ffmpeg.wasm is required.
+Next.js App Router, React, TypeScript, shadcn/ui, and Tailwind. Browser-safe types and validation live in packages/core; server-only provider requests live in apps/web/src/lib/server. Dynamically loaded Mediabunny handles local video review/guide encoding and server container inspection. No inference SDK, local weights, GPU process, native ffmpeg, or ffmpeg.wasm is required.
 
 The server authenticates all generation requests with a signed 12-hour HttpOnly, SameSite=Strict cookie, Secure in production, and checks the Origin. Missing configuration fails closed. JSON bodies are limited to 16 KiB; multipart uploads stay below Vercel's payload limit. Requests have an 85-second abort deadline and a 90-second function maximum.
 
@@ -54,10 +64,12 @@ The server authenticates all generation requests with a signed 12-hour HttpOnly,
 | DELETE /api/session | Sign out |
 | POST /api/avatar | Generate one character portrait |
 | POST /api/motion | Load the demo, submit a motion job, or cancel |
+| GET /api/replacement | Check whether paid full-character setup is enabled |
+| POST /api/replacement | Submit a separately consented mask-guided preview, check its existing job, or request cancellation |
 
-Motion uses the named Space in Character Swap / Low Res mode. Its raw REST request needs six inputs, including a hidden final State null omitted by its public API description. Vercel handles bounded submission. The browser keeps one continuous result stream open using an opaque job ID and downloads a bounded MP4 into memory. Reconnecting or refreshing can lose the result. HF_TOKEN stays server-only, including cancellation; cancellation tickets are signed and expire after 20 minutes. Media URLs are restricted to the fixed Space's cache paths.
+The free adapter uses the named Space in Character Swap / Low Res mode. Its raw REST request needs six inputs, including a hidden final State null omitted by its public API description. The browser holds one continuous result stream and downloads a bounded MP4 into memory; reconnecting or refreshing can lose the result. HF_TOKEN stays server-only, cancellation tickets expire after 20 minutes, and media URLs stay on the Space. The fal adapter uses separate signed 30-minute jobs with server-side status/cancel calls and HTTPS fal.media results. It never forwards its key to browsers or signed storage PUTs.
 
-Input changes clear dependent output and sharing consent. A failed request preserves completed inputs and an earlier successful video. Duplicate requests are blocked, generation is explicitly requested, and session reauthentication preserves the draft. Reset revokes Blob URLs and clears the session's media.
+Input changes clear dependent output and consent. Failures preserve completed inputs and earlier output. The client prevents duplicate operations. The paid server's same-key guard is process-local, not durable/global billing protection. Unknown jobs/submissions hold editing until resolved or explicitly left. Reauthentication preserves the in-memory draft; reset revokes Blob URLs and clears it.
 
 ## Verification
 
@@ -68,12 +80,12 @@ npm run build
 npm run test:browser
 ```
 
-Browser tests use installed Chrome and Edge, controlled provider responses, and real browser media decoding/playback/downloads. They cover both character sources, scene uploads, consent, invalidation, quota failure, cancellation, a second generation, authentication, reset, and removal of the product flow. Artifacts are saved under ignored test-results/.
+The repository browser configuration targets installed Chrome and Edge. The cloud's separate Chromium configuration has been verified; branded-browser release coverage remains outstanding. Regressions use controlled provider responses and real media decoding/playback/downloads, including full-character selection, paid consent, known/ambiguous job recovery, invalid output and earlier-result preservation. Artifacts stay under ignored test-results/; these tests do not demonstrate live generation quality.
 
 For an explicit real free-GPU test, set MOTION_REFERENCE_PATH to an absolute path to a permitted, non-sensitive portrait, then run `npm run test:motion`. This sends that portrait to the provider and consumes free quota. The normal regression suite does not consume inference quota. `npm run test:live` is an alias for the same motion check.
 
-On October 27, 2026, native free-account generation produced a fresh two-second H.264/AAC clip at 640 x 352 and 30 fps. The subsequent live browser attempt reached the provider but hit free GPU quota. A successful fresh complete browser generation remains unverified; controlled tests do not establish live-provider availability. The prompted-portrait live check also failed upstream that day despite active token verification. Existing .data files remain untouched; obsolete database-backed product source and dependencies were removed when the product-ad flow was retired.
+Earlier native free-account generation produced a two-second H.264/AAC clip, followed by a browser attempt that hit free quota. A later supplied-media browser test completed a real 2-second 368 × 608 download and playback, but retained the source outfit/hair and failed full-character fidelity. Paid live quality/audio remain unverified. Existing .data files remain untouched; no user media is committed.
 
 ## Vercel
 
-Use Root Directory `apps/web` and include shared workspace sources outside it. Install using the repository's npm lockfile and run the web build script. Set the three required server variables in Preview and Production; add Cloudflare credentials only for prompted characters. No static WASM assets or runtime media storage are needed. Verify a preview, including authentication, provider CORS, cancellation and downloads, before promotion. Vercel Hobby requires personal non-commercial use. A preview deployment has not yet been verified.
+Use Root Directory `apps/web` and include shared workspace sources outside it. Install with the npm lockfile and run the web build script. Authentication requires APP_ACCESS_PASSWORD and SESSION_SIGNING_SECRET; add HF_TOKEN only for the free preview and Cloudflare bindings only for prompted references. Keep the paid flags false until its account/spending setup is deliberately reviewed. Public paid deployment additionally requires durable cross-instance job/idempotency/budget controls; the current process-local prototype is insufficient. Verify a deployment preview before promotion. Vercel Hobby requires personal non-commercial use; no preview deployment has been verified.

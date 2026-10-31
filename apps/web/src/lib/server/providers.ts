@@ -44,7 +44,7 @@ export async function generateAvatar(prompt: string, signal: AbortSignal): Promi
   const body = await providerJson(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${MODELS.avatar}`, {
     method: "POST", signal,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${requiredEnv("CLOUDFLARE_API_TOKEN")}` },
-    body: JSON.stringify({ prompt: `Portrait photograph of a fictional adult character, head and shoulders, centered, plain background. No text or logos. ${prompt}`, steps: 4 }),
+    body: JSON.stringify({ prompt: `Full-body reference photograph of one fictional adult character, centered, head to toe with feet visible, unobstructed face, neutral pose, clearly defined clothing, plain background. No text or logos. ${prompt}`, steps: 4 }),
   });
   if (body.success === false) {
     const errors = array(body.errors).map((value) => object(value).message).join(" ");

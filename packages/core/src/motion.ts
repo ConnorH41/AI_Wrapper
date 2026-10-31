@@ -8,6 +8,7 @@ export const MOTION = {
 } as const;
 
 export type MotionJob = { eventId: string; streamUrl: string; cancelTicket: string };
+export type MotionDiagnostics = { mask?: string; background?: string };
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid motion provider response.");
@@ -43,13 +44,14 @@ export function parseMotionJob(value: unknown): MotionJob {
   return { eventId: body.eventId, streamUrl: body.streamUrl, cancelTicket: body.cancelTicket };
 }
 
-export function parseMotionEvent(block: string): { kind: "pending" } | { kind: "complete"; url: string } {
+export function parseMotionEvent(block: string): { kind: "pending" } | { kind: "complete"; url: string; diagnostics?: MotionDiagnostics } {
   const lines = block.split(/\r?\n/);
   const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
   if (!event || event === "heartbeat" || event === "generating") return { kind: "pending" };
   const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
   if (event === "error") {
-    if (/quota|allocation|exceed|GPU.*duration|seconds left/i.test(data)) throw new Error("The free GPU quota is exhausted or unavailable. Wait for it to reset; no paid fallback was used.");
+    if (/quota|allocation|GPU.{0,40}(?:duration|time|limit)|seconds left/i.test(data)) throw new Error("The free GPU quota is exhausted or unavailable. Wait for it to reset; no paid fallback was used.");
+    if (/(?:file|upload|video|payload).{0,40}(?:size|large|limit)|size.{0,30}exceed/i.test(data)) throw new Error("The provider rejected the media size. Choose a smaller scene or reference.");
     if (/safety|moderat|refus|content.policy/i.test(data)) throw new Error("The motion provider refused this content. Choose another character or scene.");
     throw new Error("Character replacement failed at the provider. Your inputs are preserved. No automatic retry was made.");
   }
@@ -58,7 +60,15 @@ export function parseMotionEvent(block: string): { kind: "pending" } | { kind: "
   if (!Array.isArray(payload) || !payload.length) throw new Error("The provider returned no motion video.");
   const first = object(payload[0]);
   const file = "video" in first ? object(first.video) : first;
-  return { kind: "complete", url: motionFileUrl(file.path, "mp4") };
+  const diagnostics: MotionDiagnostics = {};
+  for (const [key, index] of [["background", 2], ["mask", 3]] as const) {
+    if (payload[index] !== null && payload[index] !== undefined) {
+      const item = object(payload[index]);
+      const media = "video" in item ? object(item.video) : item;
+      diagnostics[key] = motionFileUrl(media.path, "mp4");
+    }
+  }
+  return { kind: "complete", url: motionFileUrl(file.path, "mp4"), ...(Object.keys(diagnostics).length ? { diagnostics } : {}) };
 }
 
 export function validateMotionMp4(bytes: Uint8Array, maxBytes: number): void {

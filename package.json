@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "npm run dev -w @aiw/web",
     "build": "npm run build -w @aiw/web",
-    "test": "tsx --tsconfig apps/web/tsconfig.json --test tests/session.test.ts tests/motion.test.ts",
+    "test": "tsx --tsconfig apps/web/tsconfig.json --test tests/session.test.ts tests/motion.test.ts tests/replacement.test.ts tests/scene-review.test.ts",
     "test:browser": "playwright test",
     "test:live": "tsx scripts/live-test.ts",
     "test:motion": "tsx scripts/live-test.ts",

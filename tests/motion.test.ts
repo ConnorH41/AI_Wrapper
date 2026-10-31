@@ -35,8 +35,12 @@ test("motion SSE parser distinguishes real completion, refusals, quota and gener
   assert.throws(() => parseMotionEvent('event: error\ndata: {"error":null}'), /failed at the provider/);
   assert.throws(() => parseMotionEvent('event: error\ndata: {"error":"GPU quota exceeded"}'), /free GPU quota/);
   assert.throws(() => parseMotionEvent('event: error\ndata: {"error":"content policy refusal"}'), /refused/);
+  assert.throws(() => parseMotionEvent('event: error\ndata: {"error":"maximum file size exceeded"}'), /media size/);
   assert.throws(() => parseMotionEvent('event: complete\ndata: []'), /no motion video/);
   assert.throws(() => parseMotionEvent('event: complete\ndata: [{"path":"https://attacker.test"}]'));
+  const diagnostics = parseMotionEvent(`event: complete\ndata: ${JSON.stringify([{ path }, null, { path }, { video: { path } }, null])}`);
+  assert.equal(diagnostics.kind, "complete");
+  if (diagnostics.kind === "complete") assert.equal(diagnostics.diagnostics?.mask, motionFileUrl(path, "mp4"));
 });
 
 test("motion media guards bound real JPEG dimensions and MP4 bytes", () => {
