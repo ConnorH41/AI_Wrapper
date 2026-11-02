@@ -1,7 +1,7 @@
 import { MOTION, parseMotionEvent, validateMotionMp4, type MotionJob, type MotionDiagnostics } from "@aiw/core/motion";
 import { validateImage } from "./images";
 
-export async function motionPortrait(blob: Blob): Promise<Blob> {
+export async function motionPortrait(blob: Blob, maxBytes: number = MOTION.portraitBytes): Promise<Blob> {
   await validateImage(blob);
   const image = await createImageBitmap(blob);
   try {
@@ -15,13 +15,13 @@ export async function motionPortrait(blob: Blob): Promise<Blob> {
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     const jpeg = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not prepare the motion reference.")), "image/jpeg", 0.9));
     canvas.width = 0; canvas.height = 0;
-    if (jpeg.size > MOTION.portraitBytes) throw new Error("Choose a simpler portrait for the 1 MB motion reference limit.");
+    if (jpeg.size > maxBytes) throw new Error("Choose a simpler character image for the shared 1 MB reference limit.");
     return jpeg;
   } finally { image.close(); }
 }
 
-export async function validateMotionScene(file: File): Promise<{ width: number; height: number; duration: number }> {
-  if (file.type !== "video/mp4" || file.size > MOTION.sceneBytes) throw new Error("Choose an MP4 scene up to 3 MB.");
+export async function validateMotionScene(file: File, maxSeconds = 15): Promise<{ width: number; height: number; duration: number }> {
+  if (file.type !== "video/mp4" || file.size > MOTION.sceneBytes) throw new Error(`Choose an MP4 scene up to ${MOTION.sceneBytes / 1024 / 1024} MB.`);
   validateMotionMp4(new Uint8Array(await file.slice(0, 32).arrayBuffer()), MOTION.sceneBytes);
   const url = URL.createObjectURL(file);
   const video = document.createElement("video");
@@ -32,7 +32,7 @@ export async function validateMotionScene(file: File): Promise<{ width: number; 
       video.onerror = () => { clearTimeout(timer); reject(new Error("The scene could not be decoded. Use an H.264 MP4.")); };
       video.preload = "metadata"; video.src = url;
     });
-    if (!Number.isFinite(info.duration) || info.duration < MOTION.seconds || info.duration > 15 || info.pixels < 1 || info.pixels > 3840 * 2160) throw new Error("Use a decodable 2–15-second scene, no larger than 4K. Only the first 2 seconds are used.");
+    if (!Number.isFinite(info.duration) || info.duration < MOTION.seconds || info.duration > maxSeconds || info.pixels < 1 || info.pixels > 3840 * 2160) throw new Error(`Use a decodable 2–${maxSeconds}-second scene, no larger than 4K.`);
     return info;
   } finally { video.onloadedmetadata = null; video.onerror = null; video.removeAttribute("src"); video.load(); URL.revokeObjectURL(url); }
 }
@@ -93,21 +93,21 @@ export async function downloadMotion(url: string, signal: AbortSignal, maxBytes:
   return new Blob([bytes], { type: "video/mp4" });
 }
 
-export async function validatePlayableVideo(blob: Blob, signal: AbortSignal, minimum: number, maximum: number): Promise<void> {
+export async function validatePlayableVideo(blob: Blob, signal: AbortSignal, minimum: number, maximum: number): Promise<{ width: number; height: number; duration: number }> {
   signal.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const video = document.createElement("video");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abort: (() => void) | undefined;
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<{ width: number; height: number; duration: number }>((resolve, reject) => {
       abort = () => reject(signal.reason);
       signal.addEventListener("abort", abort, { once: true });
       timer = setTimeout(() => reject(new Error("The generated video could not be decoded in time.")), 15000);
       video.onerror = () => reject(new Error("The provider returned an unplayable video. Your earlier result is preserved."));
       video.onloadeddata = () => {
-        if (!Number.isFinite(video.duration) || video.duration < minimum || video.duration > maximum || !video.videoWidth || !video.videoHeight || video.videoWidth * video.videoHeight > 3840 * 2160) reject(new Error("The result has unexpected duration or dimensions. Your earlier result is preserved."));
-        else resolve();
+        if (!Number.isFinite(video.duration) || video.duration < minimum || video.duration > maximum || !video.videoWidth || !video.videoHeight || video.videoWidth * video.videoHeight > 3840 * 2160) reject(new Error(`The result is ${Number.isFinite(video.duration) ? `${video.duration.toFixed(2)} seconds` : "of unknown duration"} at ${video.videoWidth} × ${video.videoHeight}. Expected ${minimum.toFixed(2)}–${maximum.toFixed(2)} seconds with valid dimensions up to 4K. Your earlier result is preserved.`));
+        else resolve({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
       };
       video.preload = "auto"; video.src = url; video.load();
       if (signal.aborted) abort();

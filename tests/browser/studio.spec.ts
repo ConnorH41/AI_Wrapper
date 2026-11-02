@@ -30,6 +30,33 @@ async function chooseCharacter(page: Page) {
   await page.getByText("I have the right to use this person", { exact: false }).click();
 }
 
+test("studio works when the browser has no randomUUID", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Crypto.prototype, "randomUUID", { value: undefined, configurable: true }));
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await login(page, false);
+  await chooseCharacter(page);
+  expect(errors).toEqual([]);
+});
+
+test("both scene workflows accept local videos larger than 3 MB", async ({ page }) => {
+  const fixture = await readFile("tests/fixtures/motion-scene.mp4");
+  const scene = Buffer.alloc(4 * 1024 * 1024);
+  fixture.copy(scene);
+  scene.writeUInt32BE(scene.length - fixture.length, fixture.length);
+  scene.write("free", fixture.length + 4);
+  await login(page);
+  await chooseCharacter(page);
+  await page.getByLabel("Motion scene source", { exact: true }).selectOption("upload");
+  await page.getByLabel("Scene video", { exact: true }).setInputFiles({ name: "larger-scene.mp4", mimeType: "video/mp4", buffer: scene });
+  await expect(page.getByLabel("Source motion scene", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toHaveCount(0);
+  await page.getByLabel("Replacement method", { exact: true }).selectOption("full-character");
+  await page.getByLabel("Short scene for full-character replacement", { exact: true }).setInputFiles({ name: "larger-scene.mp4", mimeType: "video/mp4", buffer: scene });
+  await expect(page.getByLabel("Full-character source scene", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Studio error" })).toHaveCount(0);
+});
+
 async function captureStudio(page: Page, path: string) {
   // Settle native media controls on fixture playback before recording the UI.
   for (const video of await page.locator("video:visible").all()) await video.evaluate(async (element) => {
@@ -290,6 +317,13 @@ test("full-character selection, paid consent, existing-job recovery, output vali
       const upload = route.request().postDataBuffer()!.toString();
       expect(upload).toContain("fal-paid"); expect(upload).toContain('name="review"'); expect(upload).toContain('name="mask"');
       const form = await new Response(Uint8Array.from(route.request().postDataBuffer()!), { headers: { "content-type": route.request().headers()["content-type"] } }).formData();
+      for (const view of ["portrait", "side", "back"]) {
+        const image = form.get(view);
+        expect(image instanceof Blob).toBe(true);
+        if (!(image instanceof Blob)) throw new Error("Missing character view");
+        expect(image.type).toBe("image/jpeg");
+        expect(image.size).toBeLessThanOrEqual(Math.floor(MOTION.portraitBytes / 3));
+      }
       const review = JSON.parse(String(form.get("review")));
       expect(review.reviewed).toBe(true); expect(review.checkpoints).toHaveLength(9);
       expect(review.appearance).toContain("Red cable-knit sweater");
@@ -304,6 +338,12 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   });
   await page.route(resultUrl, (route) => route.fulfill({ contentType: "video/mp4", headers: { "Access-Control-Allow-Origin": "*" }, body: invalidOutput ? Buffer.from([0, 0, 0, 12, 102, 116, 121, 112, 0, 0, 0, 0]) : fixture }));
   await login(page, false); await chooseCharacter(page);
+  for (const view of ["side", "back"]) {
+    await page.getByLabel(`${view === "side" ? "Side" : "Back"} view (optional)`, { exact: true }).setInputFiles({ name: `${view}.png`, mimeType: "image/png", buffer: await picture(page, view, "#753e59") });
+    await expect(page.getByRole("status").filter({ hasText: "Checking" })).toHaveCount(0);
+  }
+  await page.getByRole("checkbox", { name: /I reviewed all views/ }).check();
+  await page.getByRole("checkbox", { name: /right to use this person/ }).check();
   await page.getByLabel("Short scene for full-character replacement", { exact: true }).setInputFiles({ name: "short-scene.mp4", mimeType: "video/mp4", buffer: fixture });
   await expect(page.getByLabel("Full-character source scene", { exact: true })).toBeVisible();
   await expect.poll(() => page.getByLabel("Full-character source scene", { exact: true }).evaluate((video) => (video as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(2);
@@ -313,12 +353,24 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   await prepareSceneReview(page, testInfo.project.name);
   await expect(consent).not.toBeChecked(); await consent.check();
   await expect(generate).toBeEnabled();
+  await page.getByLabel("Side view (optional)", { exact: true }).setInputFiles({ name: "updated-side.png", mimeType: "image/png", buffer: await picture(page, "UPDATED SIDE", "#753e59") });
+  await expect(page.getByLabel("Prepared whole-person edit guide", { exact: true })).toHaveCount(0);
+  await expect(consent).not.toBeChecked();
+  await expect(generate).toBeDisabled();
+  await expect(page.getByLabel("Appearance that must match", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("checkbox", { name: /I reviewed all views/ })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: /I reviewed all views/ }).check();
+  await page.getByRole("checkbox", { name: /right to use this person/ }).check();
+  await prepareSceneReview(page);
+  await consent.check();
   await captureStudio(page, `test-results/${testInfo.project.name}-prepared-guide.png`);
   await generate.click();
   await expect(page.getByRole("alert", { name: "Studio error" })).toContainText("Temporary status");
   await expect(page.getByText("Resolve the current request before starting another preview.", { exact: true })).toBeVisible();
   expect(submitted).toBe(1);
   await expect(page.getByLabel("Character reference", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Side view (optional)", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Back view (optional)", { exact: true })).toBeDisabled();
   await captureStudio(page, `test-results/${testInfo.project.name}-recover-existing-job.png`);
   failStatus = false;
   await page.getByRole("button", { name: "Check existing job", exact: true }).click();
@@ -366,6 +418,12 @@ test("full-character selection, paid consent, existing-job recovery, output vali
   await page.getByRole("button", { name: "Clear selection", exact: true }).first().click();
   await expect(download).toHaveCount(0); await expect(consent).not.toBeChecked();
   await expect(generate).toBeDisabled();
+  await page.getByRole("button", { name: "Remove side view", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: /I reviewed all views/ })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /right to use this person/ })).not.toBeChecked();
+  await expect(page.getByLabel("Prepared whole-person edit guide", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Appearance that must match", { exact: true })).toHaveCount(0);
+  expect(submitted).toBe(3);
 });
 
 test("scene readiness stays local, blocks unsuitable shots and invalidates approval when instructions change", async ({ page }, testInfo) => {

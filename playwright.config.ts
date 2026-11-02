@@ -17,6 +17,11 @@ export default defineConfig({
     url: "http://127.0.0.1:3100/studio",
     timeout: 120000,
     reuseExistingServer: false,
-    env: { APP_ACCESS_PASSWORD: "test-password-at-least-sixteen", SESSION_SIGNING_SECRET: "test-signing-secret-at-least-thirty-two-characters" },
+    env: {
+      APP_ACCESS_PASSWORD: "test-password-at-least-sixteen", SESSION_SIGNING_SECRET: "test-signing-secret-at-least-thirty-two-characters",
+      ...(process.env.RUN_LIVE_MOTION_TESTS === "1" ? {} : { HF_TOKEN: "" }),
+      FAL_KEY: "", HIGGSFIELD_API_KEY: "", ENABLE_PAID_MOTION: "false", PAID_MOTION_BUDGET_REVIEWED: "false",
+      CLOUDFLARE_ACCOUNT_ID: "", CLOUDFLARE_API_TOKEN: "",
+    },
   },
 });

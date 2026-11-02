@@ -46,6 +46,9 @@ test("motion SSE parser distinguishes real completion, refusals, quota and gener
 test("motion media guards bound real JPEG dimensions and MP4 bytes", () => {
   validateMotionPortrait(portrait);
   validateMotionMp4(video, MOTION.sceneBytes);
+  const largerScene = new Uint8Array(4 * 1024 * 1024);
+  largerScene.set(video);
+  validateMotionMp4(largerScene, MOTION.sceneBytes);
   assert.throws(() => validateMotionPortrait(new Uint8Array([255, 216, 1, 2])), /JPEG/);
   const huge = Uint8Array.from(portrait);
   const frame = huge.findIndex((value, index) => value === 255 && [192, 193, 194].includes(huge[index + 1]));
@@ -116,7 +119,7 @@ test("motion API authenticates and validates origin, consent, media and upload l
     form.append("consent", "yes");
     form.set("portrait", new Blob([new Uint8Array(20)], { type: "image/jpeg" }), "bad.jpg");
     assert.equal((await POST(new Request("https://app.test/api/motion", { method: "POST", headers, body: form }))).status, 400);
-    const oversized = new Request("https://app.test/api/motion", { method: "POST", headers: { ...headers, "content-type": "multipart/form-data; boundary=fixture", "content-length": String(5 * 1024 * 1024) }, body: "too big" });
+    const oversized = new Request("https://app.test/api/motion", { method: "POST", headers: { ...headers, "content-type": "multipart/form-data; boundary=fixture", "content-length": String(MOTION.sceneBytes + MOTION.portraitBytes + 16 * 1024 + 1) }, body: "too big" });
     assert.equal((await POST(oversized)).status, 413);
     assert.equal(called, false);
   } finally { globalThis.fetch = previousFetch; }

@@ -3,17 +3,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { parsePersonRegion, type PersonRegion } from "@aiw/core/replacement";
+import { parsePersonRegion, type CharacterViews, type PersonRegion } from "@aiw/core/replacement";
 import { EMPTY_OBSERVATIONS, REVIEW, replacementPrompt, sceneReadiness, type Observations, type SceneReview } from "@aiw/core/scene-review";
 import { analyzeScene, encodeRegionGuide, type SceneAnalysis, type ReviewFrame } from "@/lib/scene-review";
-import { useObjectUrl } from "@/lib/use-object-url";
+import { CharacterReferences } from "./character-references";
 import { PersonRegionSelector } from "./person-region";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 
 export type PreparedReview = { review: SceneReview; analysis: SceneAnalysis; mask: Blob };
-type Props = { scene: File; region?: PersonRegion; portrait?: Blob; disabled: boolean; run: (label: string, work: (signal: AbortSignal) => Promise<void>) => Promise<void>; onChange: (review: PreparedReview | undefined) => void };
+type Props = { scene: File; region?: PersonRegion; character: CharacterViews<Blob | undefined>; disabled: boolean; run: (label: string, work: (signal: AbortSignal) => Promise<void>) => Promise<void>; onChange: (review: PreparedReview | undefined) => void };
 const questions: { key: keyof Observations; label: string; options: [string, string][] }[] = [
   { key: "people", label: "People in the shot", options: [["one", "One person"], ["multiple", "Multiple people"]] },
   { key: "shot", label: "Shot continuity", options: [["continuous", "One continuous shot"], ["cuts", "Contains cuts"]] },
@@ -23,7 +23,8 @@ const questions: { key: keyof Observations; label: string; options: [string, str
   { key: "reference", label: "Character reference detail", options: [["clear", "Face, hair and outfit are clear"], ["unclear", "Details are missing or unclear"]] },
 ];
 
-export function SceneReviewPanel({ scene, region, portrait, disabled, run, onChange }: Props) {
+export function SceneReviewPanel({ scene, region, character, disabled, run, onChange }: Props) {
+  const portrait = character.front;
   const [analysis, setAnalysis] = useState<SceneAnalysis>();
   const [frames, setFrames] = useState<ReviewFrame[]>([]);
   const [index, setIndex] = useState(0);
@@ -32,15 +33,14 @@ export function SceneReviewPanel({ scene, region, portrait, disabled, run, onCha
   const [motion, setMotion] = useState("");
   const [acceptRisks, setAcceptRisks] = useState(false);
   const timeline = useRef<HTMLDivElement>(null);
-  const portraitUrl = useObjectUrl(portrait);
   useEffect(() => { setAnalysis(undefined); setFrames([]); setIndex(0); }, [scene, region]);
-  useEffect(() => { setAppearance(""); setObservations((old) => ({ ...old, reference: "unknown" })); }, [portrait]);
+  useEffect(() => { setAppearance(""); setObservations((old) => ({ ...old, reference: "unknown" })); }, [character]);
   const review = useMemo<SceneReview | undefined>(() => analysis ? {
     version: 1, duration: analysis.duration, checkpoints: frames.map((frame) => ({ time: frame.time, region: frame.region })),
     observations, appearance, motion, highChange: analysis.maxChange > 0.18, uncertainTracking: analysis.uncertainFrames > 0,
     reviewed: frames.length === REVIEW.samples && frames.every((frame) => frame.reviewed), acceptRisks,
   } : undefined, [analysis, frames, observations, appearance, motion, acceptRisks]);
-  useEffect(() => { onChange(undefined); }, [review, portrait, onChange]);
+  useEffect(() => { onChange(undefined); }, [review, character, onChange]);
   useEffect(() => { setAcceptRisks(false); }, [frames, observations, appearance, motion]);
   useEffect(() => {
     const strip = timeline.current;
@@ -78,8 +78,8 @@ export function SceneReviewPanel({ scene, region, portrait, disabled, run, onCha
       <div className="space-y-4 border-t pt-5">
         <h3 className="text-lg font-semibold">Confirm the scene and character</h3>
         <p className="max-w-prose text-sm text-muted-foreground">These observations come from you. Use a short, single-person shot first. A cropped shot can replace the visible person, but cannot reveal clothing outside the camera view.</p>
-        <div className="grid items-start gap-5 sm:grid-cols-[160px_minmax(0,1fr)]">
-          {portraitUrl ? <figure className="space-y-2"><img src={portraitUrl} alt="Character appearance reference" className="max-h-60 max-w-full rounded-lg border bg-muted/50 p-2 object-contain" /><figcaption className="text-xs text-muted-foreground">Match this face, hairstyle and outfit.</figcaption></figure> : <p className="text-sm">Choose a character image above.</p>}
+        <div className="grid items-start gap-5 lg:grid-cols-2">
+          {portrait ? <div className="space-y-2"><CharacterReferences images={character} /><p className="text-xs text-muted-foreground">Match the face, hairstyle, outfit and body appearance across these views.</p></div> : <p className="text-sm">Choose a character image above.</p>}
           <div className="grid gap-4 sm:grid-cols-2">{questions.map(({ key, label, options }) => <div key={key} className="space-y-2"><Label htmlFor={`review-${key}`}>{label}</Label><select id={`review-${key}`} value={observations[key]} disabled={disabled} onChange={(event) => setObservations((old) => ({ ...old, [key]: event.target.value }))} className="block min-h-10 w-full rounded-md border border-input bg-background px-2 text-sm"><option value="unknown">Choose an observation</option>{options.map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select></div>)}</div>
         </div>
         <div className="space-y-2"><Label htmlFor="review-appearance">Appearance that must match</Label><Textarea id="review-appearance" maxLength={REVIEW.textLimit} value={appearance} disabled={disabled} onChange={(event) => setAppearance(event.target.value)} placeholder="Wavy brown hair, red cable-knit sweater. Keep these details throughout the shot." /></div>

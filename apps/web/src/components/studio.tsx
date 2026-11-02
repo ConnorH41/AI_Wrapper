@@ -1,12 +1,12 @@
 "use client";
-/* eslint-disable @next/next/no-img-element -- Session images use local Blob URLs. */
 
 import { useEffect, useRef, useState } from "react";
 import { ImageIcon, Info, LoaderCircle } from "lucide-react";
 import { FREE_COST_LABEL } from "@aiw/core/session";
+import { type CharacterView, type CharacterViews } from "@aiw/core/replacement";
 import { api, postJson, RequestError } from "@/lib/client-api";
 import { validateImage } from "@/lib/images";
-import { useObjectUrl } from "@/lib/use-object-url";
+import { CharacterReferences } from "@/components/character-references";
 import { MotionTest } from "@/components/motion-test";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,10 @@ import { Textarea } from "@/components/ui/textarea";
 export function Studio() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
-  const [portrait, setPortrait] = useState<Blob>();
+  const [character, setCharacter] = useState<CharacterViews<Blob | undefined>>({ front: undefined });
+  const portrait = character.front;
+  const [viewsReviewed, setViewsReviewed] = useState(false);
+  const hasExtraViews = Boolean(character.side || character.back);
   const [portraitMode, setPortraitMode] = useState<"upload" | "prompt">("upload");
   const [avatarPrompt, setAvatarPrompt] = useState("");
   const [consent, setConsent] = useState(false);
@@ -27,7 +30,6 @@ export function Studio() {
   const [motionDirty, setMotionDirty] = useState(false);
   const [replacementPending, setReplacementPending] = useState(false);
   const active = useRef<AbortController | null>(null);
-  const portraitUrl = useObjectUrl(portrait);
   const dirty = Boolean(portrait || avatarPrompt || motionDirty);
   const busy = Boolean(task);
 
@@ -74,8 +76,13 @@ export function Studio() {
   }
 
   function reset() {
-    setPortrait(undefined); setAvatarPrompt(""); setPortraitMode("upload"); setConsent(false);
+    setCharacter({ front: undefined }); setViewsReviewed(false); setAvatarPrompt(""); setPortraitMode("upload"); setConsent(false);
     setError(""); setMotionDirty(false); setResetKey((value) => value + 1);
+  }
+
+  function changeView(view: CharacterView, image: Blob | undefined) {
+    setCharacter((old) => view === "front" ? { front: image } : { ...old, [view]: image });
+    setConsent(false); setViewsReviewed(false);
   }
 
   if (authenticated === null) return <p role="status">Checking session…</p>;
@@ -91,24 +98,34 @@ export function Studio() {
     </Card> : null}
     <div hidden={!authenticated} className="space-y-6">
       <p className="flex max-w-prose items-start gap-2 text-sm text-muted-foreground"><Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" /><span>Your draft is not saved. Keep this tab open and download before leaving.</span></p>
-      <Card><CardHeader><CardTitle>1. Choose your character</CardTitle><CardDescription>Upload a clear character reference or describe a fictional adult, including their outfit.</CardDescription></CardHeader><CardContent>
-        <fieldset disabled={busy || replacementPending} className="grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_200px]">
+      <Card><CardHeader><CardTitle>1. Choose your character</CardTitle><CardDescription>Start with a full-body front view. Add side and back views of the same adult character and outfit if available.</CardDescription></CardHeader><CardContent>
+        <fieldset disabled={busy || replacementPending} className="min-w-0 space-y-6">
           <div className="min-w-0 space-y-5">
-          <div className="space-y-2"><Label htmlFor="portrait-mode">Character source</Label><select id="portrait-mode" value={portraitMode} onChange={(event) => { setPortraitMode(event.target.value === "prompt" ? "prompt" : "upload"); setPortrait(undefined); setConsent(false); }} className="block h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="upload">Upload a character image</option><option value="prompt">Describe a fictional character</option></select></div>
+          <div className="space-y-2"><Label htmlFor="portrait-mode">Character source</Label><select id="portrait-mode" value={portraitMode} onChange={(event) => { setPortraitMode(event.target.value === "prompt" ? "prompt" : "upload"); changeView("front", undefined); }} className="block h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="upload">Upload a character image</option><option value="prompt">Describe a fictional character</option></select></div>
           {portraitMode === "upload" ? <div className="space-y-3"><Label htmlFor="portrait-file">Character reference</Label><input key={`portrait-${resetKey}`} id="portrait-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) void run("Checking character image", async (signal) => { await validateImage(file); signal.throwIfAborted(); setPortrait(file); setConsent(false); });
-          }} className="block w-full text-sm" /><p className="text-xs text-muted-foreground">JPEG, PNG, or WebP, up to 10 MB. For a whole-character change, show the hairstyle, outfit and complete body clearly, with an unobstructed face.</p>
-            <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have the right to use this person’s likeness and their consent to appear in this video.</span></label>
-          </div> : <div className="space-y-3"><Label htmlFor="avatar-prompt">Character description</Label><Textarea id="avatar-prompt" maxLength={1700} value={avatarPrompt} onChange={(event) => { setAvatarPrompt(event.target.value); setPortrait(undefined); }} placeholder="A friendly adult with short dark hair, wearing a blue shirt." />
+            if (file) void run("Checking character image", async (signal) => { await validateImage(file); signal.throwIfAborted(); changeView("front", file); });
+          }} className="block w-full text-sm" /><p className="text-xs text-muted-foreground">Required front view. JPEG, PNG, or WebP, up to 10 MB per image. Show the face, hair, outfit and full body clearly. Replacing the front view clears the other views.</p>
+          </div> : <div className="space-y-3"><Label htmlFor="avatar-prompt">Character description</Label><Textarea id="avatar-prompt" maxLength={1700} value={avatarPrompt} onChange={(event) => { setAvatarPrompt(event.target.value); changeView("front", undefined); }} placeholder="A friendly adult with short dark hair, wearing a blue shirt." />
             <p className="text-xs text-muted-foreground">{FREE_COST_LABEL}. Creates one fictional adult portrait.</p>
-            <Button type="button" variant="outline" disabled={!avatarPrompt.trim()} onClick={() => void run("Generating character", async (signal) => { const response = await api("avatar", postJson({ prompt: avatarPrompt }), signal); const blob = await response.blob(); await validateImage(blob); signal.throwIfAborted(); setPortrait(blob); })}>{portrait ? "Regenerate character" : "Generate character"}</Button>
+            <Button type="button" variant="outline" disabled={!avatarPrompt.trim()} onClick={() => void run("Generating character", async (signal) => { const response = await api("avatar", postJson({ prompt: avatarPrompt }), signal); const blob = await response.blob(); await validateImage(blob); signal.throwIfAborted(); changeView("front", blob); })}>{portrait ? "Regenerate character" : "Generate character"}</Button>
           </div>}
           </div>
-          <figure className="space-y-2"><div className={`flex items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/50 p-3 md:min-h-60 ${portraitUrl ? "min-h-48" : "min-h-24"}`}>{portraitUrl ? <img src={portraitUrl} alt="Selected character" className="max-h-56 max-w-full rounded-md object-contain" /> : <div className="flex items-center gap-3 py-3 text-center text-sm text-muted-foreground md:flex-col"><ImageIcon aria-hidden="true" className="size-7 shrink-0 stroke-[1.5]" /><span>Your character<br className="hidden md:block" /> will appear here</span></div>}</div><figcaption className="text-center text-xs text-muted-foreground">Character reference</figcaption></figure>
+          <div className="grid gap-5 sm:grid-cols-2">{(["side", "back"] as const).map((view) => <div key={`${view}-${resetKey}-${Boolean(portrait)}`} className="space-y-2">
+            <Label htmlFor={`character-${view}`}>{view === "side" ? "Side view (optional)" : "Back view (optional)"}</Label>
+            <input id={`character-${view}`} type="file" value="" accept="image/jpeg,image/png,image/webp" disabled={!portrait} className="block w-full text-sm" onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void run(`Checking ${view} view`, async (signal) => { await validateImage(file); signal.throwIfAborted(); changeView(view, file); });
+            }} />
+            {character[view] ? <Button type="button" size="sm" variant="ghost" onClick={() => changeView(view, undefined)}>Remove {view} view</Button> : null}
+          </div>)}</div>
+          <p className="text-xs text-muted-foreground">Upload separate images with the same outfit, hairstyle and body proportions. Extra views may help describe appearance; they do not guarantee replacement quality.</p>
+          {portrait ? <CharacterReferences images={character} /> : <div className="flex items-center gap-3 py-3 text-sm text-muted-foreground"><ImageIcon aria-hidden="true" className="size-7 shrink-0" /><span>Your character views will appear here.</span></div>}
+          {hasExtraViews ? <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={viewsReviewed} onChange={(event) => setViewsReviewed(event.target.checked)} /><span>I reviewed all views: they show the same adult character, hairstyle, body proportions and outfit.</span></label> : null}
+          {portraitMode === "upload" || hasExtraViews ? <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have the right to use this person’s likeness and their consent to appear in this video, for every uploaded view.</span></label> : null}
         </fieldset>
       </CardContent></Card>
-      <MotionTest key={`motion-${resetKey}`} portrait={portrait} allowed={portraitMode === "prompt" || consent} busy={busy} authenticated={authenticated === true} pending={replacementPending} onPendingChange={setReplacementPending} run={run} onDirtyChange={setMotionDirty} />
+      <MotionTest key={`motion-${resetKey}`} character={character} allowed={(portraitMode === "prompt" && !hasExtraViews || consent) && (!hasExtraViews || viewsReviewed)} busy={busy} authenticated={authenticated === true} pending={replacementPending} onPendingChange={setReplacementPending} run={run} onDirtyChange={setMotionDirty} />
       <div className="flex flex-wrap gap-2 border-t pt-5"><Button type="button" variant="outline" disabled={busy || replacementPending} onClick={reset}>Start over</Button><Button type="button" variant="ghost" disabled={busy || replacementPending} onClick={() => void run("Signing out", async (signal) => { await api("session", { method: "DELETE" }, signal); reset(); setAuthenticated(false); })}>Sign out</Button></div>
     </div>
     {task ? <div role="status" className="sticky bottom-3 flex items-center justify-between gap-4 rounded-xl border border-input bg-card p-4"><p className="flex items-center gap-3 text-sm"><LoaderCircle aria-hidden="true" className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />{task}…</p><Button type="button" size="sm" variant="outline" onClick={() => active.current?.abort()}>Cancel</Button></div> : null}

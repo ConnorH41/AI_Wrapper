@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MOTION, motionMediaUrl, parseMotionJob, type MotionDiagnostics } from "@aiw/core/motion";
+import { type CharacterViews } from "@aiw/core/replacement";
 import { api, postJson } from "@/lib/client-api";
 import { motionPortrait, receiveMotion, validateMotionScene } from "@/lib/motion";
 import { useObjectUrl } from "@/lib/use-object-url";
@@ -9,10 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { FullCharacterTest } from "./full-character-test";
+import { HiggsfieldTest } from "./higgsfield-test";
 import { MediaPreview } from "./media-preview";
 
 type Props = {
-  portrait: Blob | undefined;
+  character: CharacterViews<Blob | undefined>;
   allowed: boolean;
   busy: boolean;
   authenticated: boolean;
@@ -22,8 +24,9 @@ type Props = {
   run: (label: string, work: (signal: AbortSignal) => Promise<void>) => Promise<void>;
 };
 
-export function MotionTest({ portrait, allowed, busy, authenticated, pending, onPendingChange, run, onDirtyChange }: Props) {
-  const [engine, setEngine] = useState<"full-character" | "free">("full-character");
+export function MotionTest({ character, allowed, busy, authenticated, pending, onPendingChange, run, onDirtyChange }: Props) {
+  const portrait = character.front;
+  const [engine, setEngine] = useState<"full-character" | "free" | "higgsfield">("full-character");
   const [mode, setMode] = useState<"demo" | "upload">("demo");
   const [scene, setScene] = useState<File>();
   const [demo, setDemo] = useState<string>();
@@ -33,14 +36,15 @@ export function MotionTest({ portrait, allowed, busy, authenticated, pending, on
   const [diagnostics, setDiagnostics] = useState<MotionDiagnostics>();
   const sceneUrl = useObjectUrl(scene);
   const outputUrl = useObjectUrl(output);
-  useEffect(() => { setOutput(undefined); setDiagnostics(undefined); setConsent(false); setNotice(""); }, [portrait, allowed, scene, mode, engine]);
+  useEffect(() => { setOutput(undefined); setDiagnostics(undefined); setConsent(false); setNotice(""); }, [character, allowed, scene, mode, engine]);
   useEffect(() => { if (engine === "free") onDirtyChange(Boolean(scene || demo || output)); }, [scene, demo, output, engine, onDirtyChange]);
 
   return <Card>
     <CardHeader><CardTitle>2. Scene and motion</CardTitle><CardDescription>Review your scene before generating a short character preview.</CardDescription></CardHeader>
     <CardContent className="space-y-4">
-      <div className="max-w-md space-y-2"><Label htmlFor="replacement-method">Replacement method</Label><select id="replacement-method" value={engine} disabled={busy || pending} onChange={(event) => { setEngine(event.target.value === "free" ? "free" : "full-character"); setScene(undefined); setDemo(undefined); onDirtyChange(false); }} className="block h-11 w-full rounded-lg border border-input bg-card px-3 text-sm"><option value="full-character">Full character — mask-guided (paid)</option><option value="free">Experimental free preview</option></select></div>
-      {engine === "full-character" ? <FullCharacterTest portrait={portrait} allowed={allowed} busy={busy} authenticated={authenticated} run={run} onDirtyChange={onDirtyChange} onPendingChange={onPendingChange} /> : <>
+      <div className="max-w-md space-y-2"><Label htmlFor="replacement-method">Replacement method</Label><select id="replacement-method" value={engine} disabled={busy || pending} onChange={(event) => { const value = event.target.value; setEngine(value === "free" || value === "higgsfield" ? value : "full-character"); setScene(undefined); setDemo(undefined); onDirtyChange(false); }} className="block h-11 w-full rounded-lg border border-input bg-card px-3 text-sm"><option value="full-character">fal VACE (paid, experimental mask guide)</option><option value="higgsfield">Higgsfield (paid, choose normal Genjutsu or Light below)</option><option value="free">Free character swap (experimental preview)</option></select></div>
+      {engine === "higgsfield" ? <HiggsfieldTest character={character} allowed={allowed} busy={busy} authenticated={authenticated} run={run} onDirtyChange={onDirtyChange} onPendingChange={onPendingChange} /> : engine === "full-character" ? <FullCharacterTest character={character} allowed={allowed} busy={busy} authenticated={authenticated} run={run} onDirtyChange={onDirtyChange} onPendingChange={onPendingChange} /> : <>
+      <p className="text-sm text-muted-foreground">The free preview sends only the front view. Side and back images are used only by the full-character method.</p>
       <p className="max-w-prose text-sm text-muted-foreground">Experimental 2-second, low-resolution preview. Its automatic selection may preserve the source clothing. Use the returned mask to check what was actually editable; full-character quality is not guaranteed.</p>
       <fieldset disabled={busy} className="space-y-4">
         {!portrait || !allowed ? <p className="text-sm">Choose a character above and confirm likeness consent for an uploaded portrait.</p> : <p className="text-sm">Review your character and the source scene before generating.</p>}
@@ -53,7 +57,7 @@ export function MotionTest({ portrait, allowed, busy, authenticated, pending, on
         })}>{demo ? "Reload demo scene" : "Load demo scene"}</Button> : <div className="space-y-2"><Label htmlFor="motion-scene-file">Scene video</Label><input id="motion-scene-file" type="file" accept="video/mp4" className="block w-full text-sm" onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void run("Checking motion scene", async (signal) => { await validateMotionScene(file); signal.throwIfAborted(); setScene(file); });
-        }} /><p className="text-xs text-muted-foreground">MP4 up to 3 MB, 2–15 seconds. Use one clearly visible person and a steady camera. Only the first 2 seconds are generated.</p></div>}
+        }} /><p className="text-xs text-muted-foreground">MP4 up to {MOTION.sceneBytes / 1024 / 1024} MB, 2–15 seconds. Use one clearly visible person and a steady camera. Only the first 2 seconds are generated.</p></div>}
         {(mode === "demo" ? demo : sceneUrl) ? <MediaPreview controls src={mode === "demo" ? demo : sceneUrl} aria-label="Source motion scene" className="max-h-80" /> : null}
         <p className="text-sm text-muted-foreground">$0 within available free quotas. Generation uses the shared Hugging Face free GPU allowance and may queue for several minutes. Source-scene audio is retained; custom speech and lip-sync are not available.</p>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I have permission to use this media and approve sending the character and scene to the public <a href={`https://huggingface.co/spaces/${MOTION.space}`} target="_blank" rel="noreferrer" className="underline">Hugging Face motion demo</a>. I will use non-sensitive media; the provider processes and temporarily hosts these files.</span></label>

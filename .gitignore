@@ -6,6 +6,7 @@ playwright-report/
 dist
 data
 .data
+.local/
 .playwright-mcp
 mvp-complete.png
 .env

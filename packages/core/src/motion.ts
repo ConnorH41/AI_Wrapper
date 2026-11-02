@@ -3,7 +3,7 @@ export const MOTION = {
   space: "alexnasa/Wan2.2-Animate-ZEROGPU",
   seconds: 2,
   portraitBytes: 1024 * 1024,
-  sceneBytes: 3 * 1024 * 1024,
+  sceneBytes: 100 * 1024 * 1024,
   outputBytes: 4 * 1024 * 1024,
 } as const;
 

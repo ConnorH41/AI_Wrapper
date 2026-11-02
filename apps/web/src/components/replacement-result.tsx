@@ -2,12 +2,14 @@
 /* eslint-disable @next/next/no-img-element -- Local, memory-only comparison frames. */
 
 import { useEffect, useState } from "react";
+import { type CharacterViews } from "@aiw/core/replacement";
 import { sampleResult } from "@/lib/scene-review";
 import { useObjectUrl } from "@/lib/use-object-url";
 import type { PreparedReview } from "./scene-review";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { MediaPreview } from "./media-preview";
+import { CharacterReferences } from "./character-references";
 
 const checks = [
   ["identity", "The face stays consistent with the character reference."],
@@ -17,8 +19,8 @@ const checks = [
   ["artifacts", "I watched the whole clip and found no unacceptable hands, edges or person remnants."],
 ] as const;
 
-export function ReplacementResult({ output, prepared, portrait, disabled }: { output: Blob; prepared: PreparedReview; portrait?: Blob; disabled: boolean }) {
-  const outputUrl = useObjectUrl(output), portraitUrl = useObjectUrl(portrait);
+export function ReplacementResult({ output, prepared, character, disabled }: { output: Blob; prepared: PreparedReview; character: CharacterViews<Blob | undefined>; disabled: boolean }) {
+  const outputUrl = useObjectUrl(output);
   const [images, setImages] = useState<string[]>();
   const [frameError, setFrameError] = useState("");
   const [index, setIndex] = useState(0);
@@ -37,8 +39,8 @@ export function ReplacementResult({ output, prepared, portrait, disabled }: { ou
     <p className="text-xs text-muted-foreground">This appearance test may omit source audio. Audio restoration and synchronization are not verified.</p>
     {images ? <>
       <div role="group" aria-label="Result comparison timeline" className="flex flex-wrap gap-2">{prepared.analysis.frames.map((frame, i) => <Button type="button" size="sm" key={i} variant={index === i ? "default" : "outline"} aria-pressed={index === i} onClick={() => setIndex(i)}><span className="tabular-nums">{frame.time.toFixed(2)}s</span></Button>)}</div>
-      <div className="grid items-start gap-4 sm:grid-cols-3">
-        {portraitUrl ? <figure><figcaption className="mb-2 text-sm font-medium">Character reference</figcaption><img src={portraitUrl} alt="Quality review character reference" className="h-60 w-full rounded-lg border bg-muted/50 p-2 object-contain" /></figure> : null}
+      <CharacterReferences images={character} />
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <figure><figcaption className="mb-2 text-sm font-medium">Source · {prepared.analysis.frames[index].time.toFixed(2)}s</figcaption><img src={prepared.analysis.frames[index].image} alt="Quality review source frame" className="h-60 w-full rounded-lg border bg-muted/50 p-2 object-contain" /></figure>
         <figure><figcaption className="mb-2 text-sm font-medium">Result · matching timestamp</figcaption><img src={images[index]} alt="Quality review generated frame" className="h-60 w-full rounded-lg border bg-muted/50 p-2 object-contain" /></figure>
       </div>

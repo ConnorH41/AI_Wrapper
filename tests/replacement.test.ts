@@ -8,6 +8,7 @@ import { GET, POST } from "../apps/web/src/app/api/replacement/route";
 import { createSession } from "../apps/web/src/lib/server/session";
 import { type SceneReview } from "../packages/core/src/scene-review";
 import { validateReviewedMedia } from "../apps/web/src/lib/server/review-media";
+import { requestId } from "../apps/web/src/lib/request-id";
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -43,6 +44,71 @@ function form() {
   body.append("review", JSON.stringify(review)); body.append("mask", new Blob([video], { type: "video/mp4" }), "guide.mp4"); body.append("consent", "fal-paid"); body.append("requestKey", id);
   return body;
 }
+
+test("request IDs remain secure UUIDs without the secure-context randomUUID API", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
+  Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+  try {
+    const ids = Array.from({ length: 100 }, () => requestId());
+    assert.equal(new Set(ids).size, ids.length);
+    for (const id of ids) assert.match(id, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  } finally {
+    if (descriptor) Object.defineProperty(crypto, "randomUUID", descriptor);
+    else Reflect.deleteProperty(crypto, "randomUUID");
+  }
+});
+
+test("all character views are validated and share the original upload budget before provider requests", async () => {
+  enabled();
+  const invalid = form(); invalid.set("side", new Blob(["not a JPEG"], { type: "image/jpeg" }));
+  assert.equal((await POST(request(invalid))).status, 400);
+  const wrongType = form(); wrongType.set("back", new Blob([portrait], { type: "image/png" }));
+  assert.equal((await POST(request(wrongType))).status, 400);
+  const duplicate = form();
+  duplicate.append("side", new Blob([portrait], { type: "image/jpeg" }));
+  duplicate.append("side", new Blob([portrait], { type: "image/jpeg" }));
+  assert.equal((await POST(request(duplicate))).status, 400);
+  const tooLarge = form();
+  const padded = new Uint8Array(400 * 1024); padded.set(portrait);
+  for (const view of ["portrait", "side", "back"]) tooLarge.set(view, new Blob([padded], { type: "image/jpeg" }));
+  const response = await POST(request(tooLarge));
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error.message, /total at most 1 MB/);
+});
+
+test("front, side and back plus a larger local scene reach the provider and bind the submission key", async () => {
+  enabled();
+  const names: string[] = [];
+  let references: string[] = [];
+  globalThis.fetch = async (url, init) => {
+    const target = String(url);
+    if (target.includes("/storage/upload/initiate")) {
+      const { file_name } = JSON.parse(String(init?.body)); names.push(file_name);
+      return Response.json({ upload_url: "https://v3.fal.media/upload/signed", file_url: `https://v3.fal.media/files/${file_name}` });
+    }
+    if (target.includes("/upload/signed")) {
+      assert.equal(new Headers(init?.headers).has("authorization"), false);
+      return new Response(null, { status: 200 });
+    }
+    if (target === `https://queue.fal.run/${REPLACEMENT.endpoint}`) {
+      references = JSON.parse(String(init?.body)).ref_image_urls;
+      return Response.json({ request_id: id });
+    }
+    throw new Error("Unexpected URL");
+  };
+  const key = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const body = form(); body.set("requestKey", key);
+  const largerScene = Buffer.alloc(4 * 1024 * 1024);
+  largerScene.set(video);
+  largerScene.writeUInt32BE(largerScene.length - video.length, video.length);
+  largerScene.write("free", video.length + 4);
+  body.set("scene", new Blob([largerScene], { type: "video/mp4" }), "scene.mp4");
+  for (const view of ["side", "back"]) body.append(view, new Blob([portrait], { type: "image/jpeg" }), `${view}.jpg`);
+  assert.equal((await POST(request(body))).status, 200);
+  assert.deepEqual(names.slice(0, 3), ["character-front.jpg", "character-side.jpg", "character-back.jpg"]);
+  assert.deepEqual(references, names.slice(0, 3).map((name) => `https://v3.fal.media/files/${name}`));
+  assert.throws(() => submitReplacement({ front: portrait, back: portrait }, video, video, review, key, AbortSignal.timeout(1000)), /different inputs/);
+});
 
 test("paid mode fails closed until key, deliberate enablement and budget review are all present", async () => {
   assert.equal(replacementAvailable(), false);
@@ -102,8 +168,8 @@ test("submission uses an explicit full-region mask, reference and safety checks,
     throw new Error("Unexpected URL");
   };
   const key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  const first = submitReplacement(portrait, video, video, review, key, AbortSignal.timeout(1000));
-  const duplicate = submitReplacement(portrait, video, video, review, key, AbortSignal.timeout(1000));
+  const first = submitReplacement({ front: portrait }, video, video, review, key, AbortSignal.timeout(1000));
+  const duplicate = submitReplacement({ front: portrait }, video, video, review, key, AbortSignal.timeout(1000));
   assert.equal(first, duplicate);
   const job = await first;
   assert.equal(parseReplacementTicket(job.ticket), id);
@@ -118,16 +184,16 @@ test("submission uses an explicit full-region mask, reference and safety checks,
   const maskPut = calls.filter((c) => c.url.includes("/upload/signed"))[2];
   const mask = new Uint8Array(await (maskPut.init!.body as Blob).arrayBuffer());
   assert.deepEqual(mask, video);
-  assert.throws(() => submitReplacement(portrait, video, video, { ...review, appearance: "Different character outfit" }, key, AbortSignal.timeout(1000)), /different inputs/);
-  assert.throws(() => submitReplacement(portrait, video, video.slice(0, -1), review, key, AbortSignal.timeout(1000)), /different inputs/);
+  assert.throws(() => submitReplacement({ front: portrait }, video, video, { ...review, appearance: "Different character outfit" }, key, AbortSignal.timeout(1000)), /different inputs/);
+  assert.throws(() => submitReplacement({ front: portrait }, video, video.slice(0, -1), review, key, AbortSignal.timeout(1000)), /different inputs/);
 });
 
 test("failed or ambiguous submits are retained for the key and never automatically replayed", async () => {
   enabled(); let count = 0;
   globalThis.fetch = async () => { count++; throw new TypeError("network failure"); };
   const key = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-  await assert.rejects(submitReplacement(portrait, video, video, review, key, AbortSignal.timeout(1000)));
-  await assert.rejects(submitReplacement(portrait, video, video, review, key, AbortSignal.timeout(1000)));
+  await assert.rejects(submitReplacement({ front: portrait }, video, video, review, key, AbortSignal.timeout(1000)));
+  await assert.rejects(submitReplacement({ front: portrait }, video, video, review, key, AbortSignal.timeout(1000)));
   assert.equal(count, 1);
 });
 
