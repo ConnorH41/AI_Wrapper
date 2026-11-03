@@ -1,5 +1,6 @@
 # Project notes
 
+- [Production AI security plan](production-security-plan.md): architecture-independent security assessment, 28-area risk register, AI/content controls, implementation and release evidence, incident/recovery planning, and primary-source references.
 - [Full-character research and roadmap](full-character-replacement.md): actual test findings, masking/sampling differences, provider comparison, costs, longer-video strategy and source references.
 - [Replacement implementation and setup](replacement-setup.md): what is implemented, what remains experimental, paid enablement, limits, validation and remaining production work.
 - [Scene readiness and quality review](scene-readiness.md): local motion measurements, nine-frame corrections, exact prompts, timed edit guides, acceptance/rejection and the boundary between preparation and actual model quality.
